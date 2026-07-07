@@ -21,6 +21,9 @@ build/
 charts/
 backend/app/charts/
 
+# ClickHouse volume backups (see README § Backing up and restoring ClickHouse data)
+clickhouse_data_backup.tar.gz
+
 # editor / OS
 .DS_Store
 .vscode/

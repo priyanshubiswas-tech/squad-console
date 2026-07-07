@@ -10,8 +10,10 @@ The public product name is intentionally kept **out of every layer except the fr
 - [Architecture](#architecture)
 - [Repo layout](#repo-layout)
 - [Prerequisites](#prerequisites)
-- [Quickstart SOP](#quickstart-sop)
+- [Docker Compose setup SOP](#docker-compose-setup-sop)
+- [What's already inside each container](#whats-already-inside-each-container)
 - [Data persistence SOP](#data-persistence-sop)
+- [Backing up and restoring ClickHouse data](#backing-up-and-restoring-clickhouse-data)
 - [Adding your LLM API key later](#adding-your-llm-api-key-later)
 - [Roadmap](#roadmap)
 
@@ -53,34 +55,116 @@ flowchart LR
 - Docker Desktop (or another Docker Engine + Compose v2)
 - That's it to run this pass — no Python/Node install needed locally, everything runs in containers.
 
-## Quickstart SOP
+## Docker Compose setup SOP
+
+Three containers — `clickhouse`, `backend`, `frontend` — on one Docker network (`squadnet`), brought up together with a single `docker-compose.yml`. Steps below take you from a fresh clone to all three verified healthy.
+
+**1. Clone and configure**
 
 ```bash
 git clone <this-repo-url>
 cd squad-console
-cp .env.example .env       # already has working defaults; edit if you want
-docker compose up -d
+cp .env.example .env       # already has working defaults; edit if you have API keys
 ```
 
-Verify it's up:
+**2. Build and start every container**
 
 ```bash
+docker compose up -d --build
+```
+
+This creates, in order: the `squadnet` network → the `clickhouse_data` named volume → the `clickhouse` container (schema self-creates on first boot from `database/clickhouse/init/`) → the `backend` container (waits for ClickHouse to report healthy) → the `frontend` container (waits for the backend to report healthy).
+
+**3. Watch it come up**
+
+```bash
+docker compose ps
+```
+
+All three should settle on `Up ... (healthy)` within about 30 seconds on a first build (ClickHouse takes the longest — it's creating 8 databases). If `clickhouse` briefly shows `unhealthy` right after the very first boot, give it one restart: `docker compose restart clickhouse` (a known one-time race between its init-script bootstrap and the real server binding its ports — see `database/clickhouse/README.md`).
+
+**4. Verify each service individually**
+
+```bash
+# ClickHouse — HTTP interface directly
+curl "http://localhost:8123/ping"                                            # Ok.
+curl "http://localhost:8123/?query=SHOW+DATABASES" --user default:changeme   # lists all 8 DBs
+
+# Backend — FastAPI
 curl localhost:8000/api/health              # {"status": "ok"}
 curl localhost:8000/api/health/clickhouse   # confirms squad_data_store + all 7 team DBs exist
-open http://localhost:3000                  # placeholder frontend, shows the same health check
+
+# Frontend — placeholder page (calls the backend health check itself)
+open http://localhost:3000
 ```
 
-Or inspect the schema directly:
+**Common commands**
 
-```bash
-docker compose exec clickhouse clickhouse-client --query "SHOW DATABASES"
-```
+| Command | Effect |
+|---|---|
+| `docker compose up -d` | Start everything (build only if images don't exist yet) |
+| `docker compose up -d --build` | Rebuild images first, then start — use after changing backend/frontend code or their Dockerfiles |
+| `docker compose logs -f <service>` | Tail logs for one container (`clickhouse`, `backend`, or `frontend`) |
+| `docker compose restart <service>` | Restart a single container without touching the others |
+| `docker compose ps` | Show container status + health |
+| `docker compose down` | Stop and remove containers (volume survives) |
+| `docker compose down -v` | Stop and remove containers **and** the ClickHouse volume — destructive, see below |
+
+## What's already inside each container
+
+| Container | Image / base | Exposed on host | What's there right now |
+|---|---|---|---|
+| `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 8 databases: `squad_data_store` (master, partitioned by `team_code`) + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`) — **schema only, 0 rows**, data loading is the next phase. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real data). |
+| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health` (liveness) and `GET /api/health/clickhouse` (confirms the schema above exists). No other routes yet — session/dashboard/inspect/chat come in later phases. |
+| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check and renders the result. No login/dashboard/chat UI yet. |
 
 ## Data persistence SOP
 
 - `docker compose stop` / `docker compose start` — **preserves** the ClickHouse volume. Safe to use any time.
 - `docker compose down` (no flag) — stops and removes containers, but the named volume survives; `docker compose up -d` afterwards picks up right where you left off.
 - `docker compose down -v` — **destroys** the `clickhouse_data` volume and everything in it. Only use this if you actually want a clean slate (e.g. you changed a schema file under `database/clickhouse/init/` and need it to re-run).
+
+## Backing up and restoring ClickHouse data
+
+The data itself (as opposed to the schema, which is version-controlled SQL) lives only in the `clickhouse_data` Docker volume — it's not something that belongs in git (binary, changes constantly, would bloat the repo). To hand someone a working copy of your data, share a tarball of that volume instead. This is a raw filesystem-level backup, so it captures schema + data + everything together — whoever restores it doesn't need to run the init scripts separately.
+
+**Owner: create a backup**
+
+```bash
+# Stop ClickHouse first so nothing is mid-write during the copy
+docker compose stop clickhouse
+
+docker run --rm \
+  -v squad-console_clickhouse_data:/data \
+  -v "$(pwd)":/backup \
+  alpine tar czf /backup/clickhouse_data_backup.tar.gz -C /data .
+
+docker compose start clickhouse
+```
+
+This produces `clickhouse_data_backup.tar.gz` in the repo root — share that file however you'd share any large file (it is **not** committed to git; keep it out of the repo).
+
+**Recipient: restore a shared backup**
+
+```bash
+git clone <this-repo-url>
+cd squad-console
+cp .env.example .env
+
+# Bring the stack up once so the named volume exists, then stop ClickHouse
+docker compose up -d clickhouse
+docker compose stop clickhouse
+
+# Drop the shared clickhouse_data_backup.tar.gz into the repo root, then:
+docker run --rm \
+  -v squad-console_clickhouse_data:/data \
+  -v "$(pwd)":/backup \
+  alpine sh -c "rm -rf /data/* && tar xzf /backup/clickhouse_data_backup.tar.gz -C /data"
+
+docker compose up -d
+```
+
+Verify it worked with the same health checks from the setup SOP above (`curl localhost:8000/api/health/clickhouse` should now show row counts once data exists, not just empty schema). The volume name is fixed by the compose project name (`squad-console_clickhouse_data`) — if you renamed the project in `docker-compose.yml`'s top-level `name:` field, adjust the volume name in these commands to match (`docker volume ls` shows the actual name).
 
 ## Adding your LLM API key later
 
