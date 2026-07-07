@@ -1,6 +1,11 @@
 # secrets
 .env
 
+# original planning docs - kept locally only, not published (full of
+# pre-rebrand "Tactica" branding)
+TACTICA_BUILD_SPEC*.md
+Tactica_Architecture*.pdf
+
 # python
 __pycache__/
 *.pyc
