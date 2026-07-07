@@ -1,0 +1,58 @@
+name: squad-console
+
+networks:
+  squadnet:
+    driver: bridge
+
+volumes:
+  clickhouse_data:
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    networks:
+      - squadnet
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # native protocol
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./database/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    env_file: .env
+    healthcheck:
+      # 127.0.0.1, not localhost: localhost resolves to ::1 first, and
+      # ClickHouse doesn't bind IPv6 under Docker Desktop (IPv6 disabled by
+      # default) - wget would fail on the IPv6 attempt before ever trying v4.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    networks:
+      - squadnet
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build: ./frontend
+    networks:
+      - squadnet
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy

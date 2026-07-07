@@ -1,0 +1,22 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# node / frontend (once it exists)
+node_modules/
+dist/
+build/
+
+# generated output (once ingestion/charts exist)
+charts/
+backend/app/charts/
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
