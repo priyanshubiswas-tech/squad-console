@@ -34,9 +34,30 @@ class Settings(BaseSettings):
     ingestion_interval_hours: int = 6
     chart_output_dir: str = "/app/charts"
 
+    # Manager identity mapping (login page, no auth/passwords)
+    manager_england: str = ""
+    manager_france: str = ""
+    manager_brazil: str = ""
+    manager_argentina: str = ""
+    manager_spain: str = ""
+    manager_germany: str = ""
+    manager_portugal: str = ""
+
     @property
     def team_list(self) -> list[str]:
         return [t.strip() for t in self.teams.split(",") if t.strip()]
+
+    @property
+    def managers(self) -> dict:
+        return {
+            "england": self.manager_england,
+            "france": self.manager_france,
+            "brazil": self.manager_brazil,
+            "argentina": self.manager_argentina,
+            "spain": self.manager_spain,
+            "germany": self.manager_germany,
+            "portugal": self.manager_portugal,
+        }
 
 
 @lru_cache

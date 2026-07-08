@@ -1,9 +1,9 @@
 """Single entrypoint for the whole ELT pipeline:
 
-    Extract (TheSportsDB)  ->  raw_data_store            [fetchers/]
-    Transform (real)       ->  squad_data_store (master)  [transform/]
-    Mock-generate (synthetic, keyed to real player_ids)   [mock_generators/]
-    Partition              ->  the 7 per-team databases    [partition.py]
+    Extract (TheSportsDB + Wikipedia)  ->  raw_data_store       [fetchers/]
+    Transform (real)                   ->  squad_data_store      [transform/]
+    Mock-generate (synthetic, keyed to real player_ids)          [mock_generators/]
+    Partition                          ->  the 7 per-team databases [partition.py]
 
 Run with: python deploy_elt.py  (or `docker compose run --rm ingestion`)
 
@@ -15,7 +15,7 @@ without needing a paid API key refreshed by hand) without restructuring
 this code, just wrapping each function call below in an operator.
 """
 from db import get_client
-from fetchers import thesportsdb
+from fetchers import thesportsdb, wikipedia
 from load import replace_table
 from mock_generators import formations, injuries, public_stats, salaries, training_load
 from partition import partition_all
@@ -23,7 +23,7 @@ from transform import clubs, matches, players, trophies
 
 PLAYERS_COLUMNS = [
     "player_id", "name", "position", "club", "age",
-    "overall_rating", "nationality", "photo_url", "team_code",
+    "overall_rating", "nationality", "photo_url", "team_code", "source",
 ]
 CLUBS_COLUMNS = ["club_id", "name", "league", "team_code"]
 MATCHES_COLUMNS = ["match_id", "opponent", "date", "result", "goals_for", "goals_against", "team_code"]
@@ -41,8 +41,9 @@ FORMATIONS_COLUMNS = ["formation_id", "name", "players_json", "notes", "suitable
 def main() -> None:
     client = get_client()
 
-    print("\n=== EXTRACT: TheSportsDB -> raw_data_store ===")
+    print("\n=== EXTRACT: TheSportsDB + Wikipedia -> raw_data_store ===")
     thesportsdb.fetch_all(client)
+    wikipedia.fetch_all(client)
 
     print("\n=== TRANSFORM: raw_data_store -> squad_data_store (real fields) ===")
     replace_table(client, "players", players.transform_all(client), PLAYERS_COLUMNS)

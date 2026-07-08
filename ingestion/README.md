@@ -5,11 +5,11 @@ The ELT pipeline that fills ClickHouse: `elt-pipeline-py-script/`. Runs on the *
 ## Pipeline shape
 
 ```
-Extract (TheSportsDB, real)  ->  raw_data_store               [fetchers/]
-Transform (real fields)      ->  squad_data_store (master)     [transform/]
+Extract (Wikipedia + TheSportsDB, real)  ->  raw_data_store           [fetchers/]
+Transform (real fields)                  ->  squad_data_store (master) [transform/]
 Mock-generate (synthetic,
-  keyed to real player_ids)  ->  squad_data_store (master)     [mock_generators/]
-Partition                    ->  the 7 per-team databases      [partition.py]
+  keyed to real player_ids)              ->  squad_data_store (master) [mock_generators/]
+Partition                                ->  the 7 per-team databases  [partition.py]
 ```
 
 Every stage is a plain Python function that only reads/writes ClickHouse — no stage hands the next one data in memory. That's deliberate groundwork for the planned **Airflow** layer: each function below becomes one task/operator later, wired up with a schedule so re-fetching real data (and eventually renewing it as free/paid API keys allow) happens automatically instead of by re-running this script by hand.
@@ -18,13 +18,15 @@ Every stage is a plain Python function that only reads/writes ClickHouse — no 
 
 | Table | Source | Notes |
 |---|---|---|
-| `players` | **Real** — TheSportsDB | name, position, club, age, nationality, photo. `overall_rating` is the one synthetic field on this table — no free (or paid) source publishes a FIFA-style rating for real players. |
-| `clubs` | **Real** — derived from squad data | `league` is blank; resolving it needs one extra API call per club, out of scope for this pass. |
+| `players` | **Real** — Wikipedia (2026 FIFA World Cup squads), photos backfilled from TheSportsDB | Full, real 26-man squads: name, position, club, age. Wikipedia's article is the primary source since TheSportsDB's own national-team profiles only have ~9-10 currently-tagged players each - real, but not a full squad. `overall_rating` is the one synthetic field on this table — no free (or paid) source publishes a FIFA-style rating for real players. `player_id` is a stable hash of the player's name (Wikipedia gives no numeric id); `source` records provenance per row. |
+| `clubs` | **Real** — derived from the loaded players | distinct `(club, team_code)` pairs read back from `squad_data_store.players`. `club_id` is a stable hash of the club name (no numeric id available). `league` is blank; resolving it needs one extra API call per club, out of scope for this pass. |
 | `matches` | **Real** — TheSportsDB | actual results, including live tournament fixtures. |
 | `trophies` | **Real**, hand-curated | TheSportsDB's honours endpoint returns nothing for these teams; `fixtures/trophies.json` is a short, factual list of major titles, checked by hand instead of fetched. |
 | `public_stats` | Synthetic | needs a paid API-Football key; deterministic (seeded by real `player_id`) until that key exists. |
 | `injuries`, `salaries`, `training_load` | Synthetic | never had a free source, by design — see the build spec. |
 | `formations` | Synthetic, but grounded in real data | tactical shapes are authored, but the lineups are built from real players grouped by their real `position` and ranked by the synthetic `overall_rating`. |
+
+This is also the app's actual value proposition, not just a data-quality note — see the root README's "The product: public vs. private data" section. Every synthetic table here doubles as a "private, staff-only" table in the access-control matrix.
 
 ## Running it
 
@@ -39,7 +41,7 @@ Requires the `clickhouse` container to be up (`docker compose up -d clickhouse` 
 
 ## Raw landing zone
 
-`raw_data_store.thesportsdb_dumps` (schema in `../database/clickhouse/init/08_raw_data_store.sql`) holds every API response byte-for-byte, timestamped, before any parsing happens. Transform stages read the *latest* dump per team/entity from there — never from what the fetch stage returned in memory — so fetch and transform stay decoupled. It's append-only (never truncated), so it also doubles as an audit trail: if a transform script has a bug, you can fix it and re-run against exactly what the API returned, without re-fetching.
+`raw_data_store.thesportsdb_dumps` (schema in `../database/clickhouse/init/08_raw_data_store.sql`) holds every API response byte-for-byte, timestamped, before any parsing happens — despite the table name, both fetchers write here (`entity` is `team`/`squad`/`matches` for TheSportsDB, `wikipedia_squad` for Wikipedia). Transform stages read the *latest* dump per team/entity from there — never from what the fetch stage returned in memory — so fetch and transform stay decoupled. It's append-only (never truncated), so it also doubles as an audit trail: if a transform script has a bug, you can fix it and re-run against exactly what the API returned, without re-fetching.
 
 ## Next: Airflow
 

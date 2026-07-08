@@ -1,6 +1,6 @@
 # ClickHouse
 
-**Status**: schema built, populated with real + synthetic data via [[ingestion]].
+**Status**: schema built, populated with real (full 26-man squads) + synthetic data via [[ingestion]].
 
 The analytical store. See `../../database/clickhouse/README.md` for the actual DDL and SOPs; this note is about how it connects to everything else.
 
@@ -13,8 +13,8 @@ The analytical store. See `../../database/clickhouse/README.md` for the actual D
 - [[ingestion]] — the only writer. Dumps raw JSON into `raw_data_store`, transforms/generates into the master DB, then fans out.
 
 ## Who reads from it
-- [[backend-fastapi]] — dashboard/inspect endpoints read the active team's DB directly; cross-team queries (if any) hit the master DB.
-- [[langgraph-agent]]'s `stats_tool` node — own team full read, opponent team `public_stats`-only read, gated by [[access-control]].
+- [[backend-fastapi]] — dashboard/inspect/charts endpoints read the active team's DB directly, gated by [[access-control]].
+- [[langgraph-agent]]'s `stats_tool` node (not built yet) — own team full read, opponent team `public_stats`-only read, gated by the same [[access-control]] function.
 
 ## Persistence
 Named Docker volume `clickhouse_data`. Survives `docker compose stop/start`; only `down -v` wipes it. Schema self-creates once via ClickHouse's `/docker-entrypoint-initdb.d/` convention (see `database/clickhouse/init/`).

@@ -6,6 +6,7 @@ networks:
 
 volumes:
   clickhouse_data:
+  charts_data:
 
 services:
   clickhouse:
@@ -38,6 +39,8 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    volumes:
+      - charts_data:/app/charts
     depends_on:
       clickhouse:
         condition: service_healthy

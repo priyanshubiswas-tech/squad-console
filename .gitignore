@@ -17,9 +17,9 @@ node_modules/
 dist/
 build/
 
-# generated output (once ingestion/charts exist)
-charts/
-backend/app/charts/
+# Generated chart PNGs live in the charts_data Docker volume (mounted at
+# /app/charts inside the backend container), never on the host filesystem -
+# so there's nothing to ignore here. backend/app/charts/ is real source code.
 
 # ClickHouse volume backups (see README § Backing up and restoring ClickHouse data)
 clickhouse_data_backup.tar.gz

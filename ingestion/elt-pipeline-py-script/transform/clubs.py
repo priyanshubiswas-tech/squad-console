@@ -1,39 +1,36 @@
-"""Transform stage: raw squad JSON -> squad_data_store.clubs rows.
+"""Transform stage: squad_data_store.players (already loaded) -> clubs rows.
 
-Clubs are derived from the real squad data (every player's current club and
-its real TheSportsDB id), de-duplicated per team. `league` is left blank -
-TheSportsDB's squad endpoint doesn't return it, and resolving it would need
-one extra API call per distinct club, which is out of scope for this pass.
+Runs after players are loaded, reading them back from ClickHouse rather than
+taking Wikipedia's parsed rows in memory - keeps every stage talking through
+the database, not shared Python state, which is what lets stages become
+independent Airflow tasks later. `club_id` has no real numeric id behind it
+(Wikipedia doesn't give one), so it's a stable hash of the club name instead.
+`league` is left blank - resolving it needs an extra lookup per club, out of
+scope for this pass.
 """
-import json
+from transform.players import _stable_id
 
-from config import TEAMS
-from db import get_latest_raw
-from transform.shared import real_squad_entries
-
-
-def parse_clubs(team_code: str, payload: str) -> list:
-    entries = real_squad_entries(json.loads(payload).get("player") or [])
-    seen = {}
-    for entry in entries:
-        club_id = entry.get("idTeam")
-        club_name = entry.get("strTeam")
-        if not club_id or not club_name or club_id in seen:
-            continue
-        seen[club_id] = {
-            "club_id": int(club_id),
-            "name": club_name,
-            "league": "",
-            "team_code": team_code,
-        }
-    return list(seen.values())
+from config import CLICKHOUSE_MASTER_DB
 
 
 def transform_all(client) -> list:
-    all_rows = []
-    for team_code in TEAMS:
-        payload = get_latest_raw(client, team_code, "squad")
-        rows = parse_clubs(team_code, payload)
-        print(f"  {team_code}: {len(rows)} distinct clubs")
-        all_rows.extend(rows)
-    return all_rows
+    rows_raw = client.query(
+        f"SELECT DISTINCT club, team_code FROM {CLICKHOUSE_MASTER_DB}.players WHERE club != ''"
+    ).result_rows
+
+    rows = []
+    for club, team_code in rows_raw:
+        rows.append({
+            "club_id": _stable_id(club),
+            "name": club,
+            "league": "",
+            "team_code": team_code,
+        })
+
+    by_team = {}
+    for row in rows:
+        by_team.setdefault(row["team_code"], 0)
+        by_team[row["team_code"]] += 1
+    for team_code, count in by_team.items():
+        print(f"  {team_code}: {count} distinct clubs")
+    return rows

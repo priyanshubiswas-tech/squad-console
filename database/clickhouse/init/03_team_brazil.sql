@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS brazil.players (
     overall_rating UInt8,
     nationality String,
     photo_url String,
-    team_code String
+    team_code String,
+    source String        -- data provenance, e.g. 'real:wikipedia' or 'synthetic'
 ) ENGINE = MergeTree()
 ORDER BY player_id;
 

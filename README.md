@@ -12,6 +12,7 @@ The public product name is intentionally kept **out of every layer except the fr
 - [Prerequisites](#prerequisites)
 - [Docker Compose setup SOP](#docker-compose-setup-sop)
 - [What's already inside each container](#whats-already-inside-each-container)
+- [The product: public vs. private data](#the-product-public-vs-private-data)
 - [Populating real data (ingestion)](#populating-real-data-ingestion)
 - [Data persistence SOP](#data-persistence-sop)
 - [Backing up and restoring ClickHouse data](#backing-up-and-restoring-clickhouse-data)
@@ -20,9 +21,14 @@ The public product name is intentionally kept **out of every layer except the fr
 
 ## Current status
 
-Infrastructure base is up: three containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend) on one Docker network, each independently health-checked, with a persistent volume for ClickHouse. The frontend is a minimal placeholder page that proves it can reach the backend and confirm the ClickHouse schema — no login, dashboard, or chatbot yet.
+Infrastructure base is up: three containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend) on one Docker network, each independently health-checked, with a persistent volume for ClickHouse. The frontend is still a minimal placeholder page — no login/dashboard/chat UI yet — but the **backend API is real and functional**:
 
-ClickHouse is no longer empty: `ingestion/elt-pipeline-py-script/` is a host-run ELT pipeline that pulls **real** squad/match/trophy data from TheSportsDB's free tier, generates the fields that genuinely have no free source (keyed to real player ids), and loads all of it into every team database. See `ingestion/README.md` for exactly what's real vs. synthetic. No LLM key is configured yet — that's a later phase, listed in [Roadmap](#roadmap).
+- Every team has a **full, real 26-man squad** (Wikipedia's 2026 World Cup squads, cross-referenced with TheSportsDB for photos), plus real clubs/matches/trophies and synthetic values for fields with no free source — see [The product: public vs. private data](#the-product-public-vs-private-data).
+- **Access control is implemented and enforced**, not just designed: `GET /api/dashboard/{team}` (full, own team only) and `GET /api/inspect/{team}` (redacted, any other team) both run through one shared `access_control.py`.
+- **Charts render server-side and are callable directly** — `GET /api/charts/{team}/injury-risk` and `/top-performers` return a PNG URL with zero LLM involvement. This is the deterministic half of the "hybrid" chat design described below.
+- **Data provenance is a first-class API**, not just a doc comment — `GET /api/data-sources` tells you exactly which fields are real (and from where) vs. synthetic (and why).
+
+No LLM key is configured yet — that's the next phase (LangGraph agent + RAG), listed in [Roadmap](#roadmap).
 
 ## Architecture
 
@@ -119,12 +125,27 @@ open http://localhost:3000
 | Container | Image / base | Exposed on host | What's there right now |
 |---|---|---|---|
 | `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 9 databases: `squad_data_store` (master, partitioned by `team_code`), `raw_data_store` (raw API dump audit trail), + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each team DB has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`), **populated** — real squad/match/trophy data plus synthetic fields, via `ingestion/`. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real *private* data). |
-| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health` (liveness) and `GET /api/health/clickhouse` (confirms the schema above exists). No other routes yet — session/dashboard/inspect/chat come in later phases. |
-| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check and renders the result. No login/dashboard/chat UI yet. |
+| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}` — session + access-controlled squad data. `GET /api/data-sources` — real-vs-synthetic transparency breakdown. `GET /api/charts/{team}/injury-risk`, `/top-performers`, `GET /api/charts/file/{filename}` — server-rendered matplotlib PNGs, callable with no LLM. `chat`/LangGraph endpoint comes in the next phase. |
+| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check and renders the result. No login/dashboard/chat UI yet — the backend API above is ready for it. |
+
+## The product: public vs. private data
+
+This is the actual value proposition, not just an access-control exercise. It mirrors how a real federation is organized: **public** is whatever the press or a rival federation could already know; **private** is your own coaching staff's internal intelligence — nobody outside your building sees it.
+
+| | Public (any team, yours or a rival's) | Private (your own team's staff only) |
+|---|---|---|
+| Squad | Real bio, real stats, real club, real photo (where available) | — |
+| Medical | — | Injury type, severity, expected return |
+| Financial | — | Weekly wage, contract expiry |
+| Sports science | — | Weekly training load, fatigue trend, **injury-risk chart** (derived from that trend) |
+| Tactics | Formation *name* only | Full lineup, tactical notes, set-piece detail |
+| History | Clubs, trophies, match results | — |
+
+Every private field is synthetic because no free (or, for `public_stats`, even paid-yet) data source exists for it — see `ingestion/README.md` for the full real-vs-synthetic table, and `GET /api/data-sources` for the same breakdown surfaced live in the product itself rather than buried in docs.
 
 ## Populating real data (ingestion)
 
-`ingestion/elt-pipeline-py-script/` runs on the **host**, deliberately outside Docker, so it can be edited and re-run with no image/container involved. It pulls real squad, match, and trophy data from TheSportsDB's free tier plus synthetic values for fields with no free source (see `ingestion/README.md` for exactly which is which), and loads all of it into every ClickHouse database. It connects to ClickHouse through the port already published to `localhost` — the `clickhouse` container must be running.
+`ingestion/elt-pipeline-py-script/` runs on the **host**, deliberately outside Docker, so it can be edited and re-run with no image/container involved. It pulls real, full 26-man squads from Wikipedia (cross-referenced with TheSportsDB for photos and match results), plus synthetic values for fields with no free source (see `ingestion/README.md` for exactly which is which), and loads all of it into every ClickHouse database. It connects to ClickHouse through the port already published to `localhost` — the `clickhouse` container must be running.
 
 ```bash
 cd ingestion/elt-pipeline-py-script
@@ -196,11 +217,11 @@ This project runs fully on real + synthetic data with **no LLM key** for now —
 
 Phases still to come, in order:
 
-1. ~~**Uniform data ingestion**~~ — done for TheSportsDB (real squads/matches/trophies) + synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`. Still open: API-Football (real `public_stats`, needs a paid key), Transfermarkt/RSS fetchers, and an Airflow layer to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
-2. **Data engineering pass** — now that real data is flowing, review the shapes together and refine the schema before building on top of it.
-3. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB.
-4. **Agentic layer** — LangGraph agent (`backend/app/langgraph_app/`), wired to the `chat` endpoint. This is when an LLM key is finally needed.
-5. **Charts** — matplotlib/seaborn chart generation from the agent.
-6. **Real frontend** — login, dashboard, inspect, and chat pages replace the current placeholder page in `frontend/`.
-7. **Nginx + full docker-compose** — reverse proxy in front of frontend + backend, remaining named volumes (`chroma_data`, `charts_data`).
+1. ~~**Uniform data ingestion**~~ — done: real 26-man squads (Wikipedia + TheSportsDB), matches, trophies, plus synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`. Still open: API-Football (real `public_stats`, needs a paid key), Transfermarkt/RSS fetchers, and an Airflow layer to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
+2. ~~**Access control + REST API**~~ — done: `access_control.py` (single source of truth), `session`/`dashboard`/`inspect` routers, `data-sources` transparency endpoint.
+3. ~~**Charts (deterministic half)**~~ — done: `backend/app/charts/generators.py` + `/api/charts/*` router, callable directly with zero LLM involvement — this is the non-agentic half of the "hybrid" chat design.
+4. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB.
+5. **Agentic layer (agentic half of "hybrid")** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint. Its `chart_node` calls the *same* chart generator functions the deterministic router uses for free-form questions. This is when an LLM key is finally needed.
+6. **Real frontend** — login, dashboard, inspect, and chat pages (with quick-reply "chips" that call the chart API directly, no LLM) replace the current placeholder page in `frontend/`.
+7. **Nginx + full docker-compose** — reverse proxy in front of frontend + backend, remaining named volume (`chroma_data`).
 8. **Deployment** — containerized services on a host that supports the full Compose stack; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).

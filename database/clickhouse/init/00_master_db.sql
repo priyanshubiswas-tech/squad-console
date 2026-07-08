@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS squad_data_store.players (
     overall_rating UInt8,
     nationality String,
     photo_url String,
-    team_code String
+    team_code String,
+    source String        -- data provenance, e.g. 'real:wikipedia' or 'synthetic' - see /api/data-sources
 ) ENGINE = MergeTree()
 PARTITION BY team_code
 ORDER BY (team_code, player_id);
