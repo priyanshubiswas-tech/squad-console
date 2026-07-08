@@ -12,6 +12,7 @@ The public product name is intentionally kept **out of every layer except the fr
 - [Prerequisites](#prerequisites)
 - [Docker Compose setup SOP](#docker-compose-setup-sop)
 - [What's already inside each container](#whats-already-inside-each-container)
+- [Populating real data (ingestion)](#populating-real-data-ingestion)
 - [Data persistence SOP](#data-persistence-sop)
 - [Backing up and restoring ClickHouse data](#backing-up-and-restoring-clickhouse-data)
 - [Adding your LLM API key later](#adding-your-llm-api-key-later)
@@ -19,7 +20,9 @@ The public product name is intentionally kept **out of every layer except the fr
 
 ## Current status
 
-This pass stands up the **infrastructure base**: three containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend) on one Docker network, wired together and each independently health-checked, with a persistent volume for ClickHouse. The frontend is a minimal placeholder page that proves it can reach the backend and confirm the ClickHouse schema — no login, dashboard, or chatbot yet. No data is loaded yet and no LLM key is configured — those are later phases, listed in [Roadmap](#roadmap).
+Infrastructure base is up: three containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend) on one Docker network, each independently health-checked, with a persistent volume for ClickHouse. The frontend is a minimal placeholder page that proves it can reach the backend and confirm the ClickHouse schema — no login, dashboard, or chatbot yet.
+
+ClickHouse is no longer empty: `ingestion/elt-pipeline-py-script/` is a host-run ELT pipeline that pulls **real** squad/match/trophy data from TheSportsDB's free tier, generates the fields that genuinely have no free source (keyed to real player ids), and loads all of it into every team database. See `ingestion/README.md` for exactly what's real vs. synthetic. No LLM key is configured yet — that's a later phase, listed in [Roadmap](#roadmap).
 
 ## Architecture
 
@@ -27,7 +30,8 @@ See `architecture/ARCHITECTURE.md` for the full narrative and `architecture/diag
 
 ```mermaid
 flowchart LR
-    ext["Free APIs + mock generators"] --> ingest["Ingestion (not built yet)"]
+    ext["TheSportsDB (real) + mock generators"] --> raw["raw_data_store"]
+    raw --> ingest["deploy_elt.py\n(host script)"]
     ingest --> ch["ClickHouse\nsquad_data_store + 7 team DBs"]
     ch --> backend["FastAPI backend"]
     backend --> frontend["Frontend (placeholder page)"]
@@ -41,7 +45,7 @@ flowchart LR
 ├── obsidian-graph/      # backlinked notes mapping how everything connects
 ├── database/clickhouse/ # schema (init/) + SOPs
 ├── backend/             # FastAPI app
-├── ingestion/           # placeholder — free-API fetchers + mock generators (next phase)
+├── ingestion/           # host-run ELT pipeline: real TheSportsDB data + synthetic fields -> ClickHouse
 ├── embedding_job/       # placeholder — Chroma embedding job (RAG phase)
 ├── knowledge_base/      # placeholder — bind-mounted tactical docs (RAG phase)
 ├── frontend/            # minimal Vite+React+Tailwind placeholder — the only place brand name/UI lives
@@ -114,9 +118,27 @@ open http://localhost:3000
 
 | Container | Image / base | Exposed on host | What's there right now |
 |---|---|---|---|
-| `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 8 databases: `squad_data_store` (master, partitioned by `team_code`) + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`) — **schema only, 0 rows**, data loading is the next phase. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real data). |
+| `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 9 databases: `squad_data_store` (master, partitioned by `team_code`), `raw_data_store` (raw API dump audit trail), + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each team DB has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`), **populated** — real squad/match/trophy data plus synthetic fields, via `ingestion/`. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real *private* data). |
 | `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health` (liveness) and `GET /api/health/clickhouse` (confirms the schema above exists). No other routes yet — session/dashboard/inspect/chat come in later phases. |
 | `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check and renders the result. No login/dashboard/chat UI yet. |
+
+## Populating real data (ingestion)
+
+`ingestion/elt-pipeline-py-script/` runs on the **host**, deliberately outside Docker, so it can be edited and re-run with no image/container involved. It pulls real squad, match, and trophy data from TheSportsDB's free tier plus synthetic values for fields with no free source (see `ingestion/README.md` for exactly which is which), and loads all of it into every ClickHouse database. It connects to ClickHouse through the port already published to `localhost` — the `clickhouse` container must be running.
+
+```bash
+cd ingestion/elt-pipeline-py-script
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python deploy_elt.py
+```
+
+Every run is a full truncate-and-reload, so it's safe to re-run any time. Verify it worked:
+
+```bash
+docker compose exec clickhouse clickhouse-client --user default --password changeme \
+  --query "SELECT name, position, club FROM england.players FORMAT PrettyCompact"
+```
 
 ## Data persistence SOP
 
@@ -168,14 +190,14 @@ Verify it worked with the same health checks from the setup SOP above (`curl loc
 
 ## Adding your LLM API key later
 
-This project runs fully on mock data with **no LLM key** for now — that gets added last, once the LangGraph agent phase is built. When you get there: open `.env`, fill in `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` plus `LLM_MODEL`, and restart the backend (`docker compose restart backend`). Nothing else changes.
+This project runs fully on real + synthetic data with **no LLM key** for now — that gets added last, once the LangGraph agent phase is built. When you get there: open `.env`, fill in `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` plus `LLM_MODEL`, and restart the backend (`docker compose restart backend`). Nothing else changes.
 
 ## Roadmap
 
 Phases still to come, in order:
 
-1. **Uniform data ingestion** — free-API fetchers (API-Football, TheSportsDB, Transfermarkt, RSS) and mock generators, both producing the same JSON shape, loaded into ClickHouse via `ingestion/partition.py`.
-2. **Data engineering pass** — once ingestion exists, review the data shapes together and refine the schema before building on top of it.
+1. ~~**Uniform data ingestion**~~ — done for TheSportsDB (real squads/matches/trophies) + synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`. Still open: API-Football (real `public_stats`, needs a paid key), Transfermarkt/RSS fetchers, and an Airflow layer to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
+2. **Data engineering pass** — now that real data is flowing, review the shapes together and refine the schema before building on top of it.
 3. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB.
 4. **Agentic layer** — LangGraph agent (`backend/app/langgraph_app/`), wired to the `chat` endpoint. This is when an LLM key is finally needed.
 5. **Charts** — matplotlib/seaborn chart generation from the agent.

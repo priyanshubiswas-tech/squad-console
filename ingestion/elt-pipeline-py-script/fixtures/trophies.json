@@ -1,0 +1,44 @@
+{
+  "england": [
+    {"name": "FIFA World Cup", "year": 1966}
+  ],
+  "france": [
+    {"name": "FIFA World Cup", "year": 1998},
+    {"name": "FIFA World Cup", "year": 2018},
+    {"name": "UEFA European Championship", "year": 1984},
+    {"name": "UEFA European Championship", "year": 2000}
+  ],
+  "brazil": [
+    {"name": "FIFA World Cup", "year": 1958},
+    {"name": "FIFA World Cup", "year": 1962},
+    {"name": "FIFA World Cup", "year": 1970},
+    {"name": "FIFA World Cup", "year": 1994},
+    {"name": "FIFA World Cup", "year": 2002}
+  ],
+  "argentina": [
+    {"name": "FIFA World Cup", "year": 1978},
+    {"name": "FIFA World Cup", "year": 1986},
+    {"name": "FIFA World Cup", "year": 2022},
+    {"name": "Copa America", "year": 2021}
+  ],
+  "spain": [
+    {"name": "FIFA World Cup", "year": 2010},
+    {"name": "UEFA European Championship", "year": 1964},
+    {"name": "UEFA European Championship", "year": 2008},
+    {"name": "UEFA European Championship", "year": 2012},
+    {"name": "UEFA European Championship", "year": 2024}
+  ],
+  "germany": [
+    {"name": "FIFA World Cup", "year": 1954},
+    {"name": "FIFA World Cup", "year": 1974},
+    {"name": "FIFA World Cup", "year": 1990},
+    {"name": "FIFA World Cup", "year": 2014},
+    {"name": "UEFA European Championship", "year": 1972},
+    {"name": "UEFA European Championship", "year": 1980},
+    {"name": "UEFA European Championship", "year": 1996}
+  ],
+  "portugal": [
+    {"name": "UEFA European Championship", "year": 2016},
+    {"name": "UEFA Nations League", "year": 2019}
+  ]
+}

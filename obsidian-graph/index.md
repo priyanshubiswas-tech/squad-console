@@ -24,4 +24,4 @@ Start here. Every note below links back to this one.
 - [[access-control]]
 
 ## Current build status
-Built so far: [[clickhouse]] schema, [[backend-fastapi]] health-check base, a [[frontend]] placeholder page — all three containers wired together on one Docker network via Docker Compose, each independently health-checked. Everything else linked above is a next-phase placeholder — see the root `README.md` roadmap for order.
+Built so far: [[clickhouse]] schema + real data, [[ingestion]]'s ELT pipeline (real [[thesportsdb]] data + synthetic fields, host-run), [[backend-fastapi]] health-check base, a [[frontend]] placeholder page — the three containers (clickhouse/backend/frontend) wired together on one Docker network via Docker Compose, each independently health-checked; ingestion runs on the host by design, not containerized. Everything else linked above is a next-phase placeholder — see the root `README.md` roadmap for order.
