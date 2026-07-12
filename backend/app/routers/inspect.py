@@ -3,9 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.access_control import BLOCKED, allowed_columns, get_allowed_tables
 from app.config import get_settings
 from app.db.clickhouse_client import get_client
-from app.deps import get_active_team
+from app.deps import get_active_team, require_api_key
 
-router = APIRouter(prefix="/api/inspect", tags=["inspect"])
+router = APIRouter(prefix="/api/inspect", tags=["inspect"], dependencies=[Depends(require_api_key)])
 
 
 @router.get("/{team_code}")

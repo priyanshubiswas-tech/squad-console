@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_settings
 from app.db.clickhouse_client import get_client
-from app.deps import get_active_team
+from app.deps import get_active_team, require_api_key
 
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=[Depends(require_api_key)])
 
 TABLES = [
     "players", "public_stats", "injuries", "salaries",

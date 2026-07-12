@@ -1,0 +1,43 @@
+# Rendered from this template at container start via the official nginx
+# image's envsubst step (any *.template file under /etc/nginx/templates/ is
+# processed automatically) - ${API_KEY} comes from the container's own
+# environment (env_file: .env in docker-compose.yml), so the real secret
+# never has to be hardcoded into a file that's committed to git.
+
+server {
+    listen 80;
+    server_name _;
+
+    # Liveness checks - no key required, mirrors the backend's own exemption
+    # (Docker's healthcheck calls this with no headers at all).
+    location /api/health {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Chart PNGs are served via <img src>, which can't attach a custom
+    # header - access control already happened at chart-generation time
+    # (see backend/app/routers/charts.py), so this path is deliberately
+    # exempt from the key check, matching the backend's own exemption.
+    location /api/charts/file/ {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        if ($http_x_api_key != "${API_KEY}") {
+            return 401;
+        }
+        proxy_pass http://backend:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location / {
+        proxy_pass http://frontend:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}

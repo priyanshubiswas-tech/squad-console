@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # API gateway - shared secret also checked by Nginx (see nginx/templates/)
+    api_key: str = "changeme-generate-a-real-secret"
+
     # ClickHouse
     clickhouse_host: str = "clickhouse"
     clickhouse_port: int = 8123

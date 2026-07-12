@@ -4,6 +4,14 @@ import { useEffect, useState } from "react";
 // proxying gets added once the real app (session/dashboard/chat) exists.
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
+// Baked in at build time (docker-compose passes it as a build arg) - note
+// this is inherently visible in the shipped JS bundle, like any browser-side
+// "secret". It's a gate against casual/automated direct API access, not a
+// true auth boundary; /api/health/clickhouse below doesn't even require it,
+// but it's attached here as the standard pattern for the gated endpoints
+// (dashboard/inspect/charts) the real frontend will call next.
+const API_KEY = import.meta.env.VITE_API_KEY ?? "";
+
 type ClickhouseHealth = {
   status: string;
   databases: string[];
@@ -14,7 +22,7 @@ export default function App() {
   const [health, setHealth] = useState<ClickhouseHealth | "loading" | "error">("loading");
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/api/health/clickhouse`)
+    fetch(`${BACKEND_URL}/api/health/clickhouse`, { headers: { "X-API-Key": API_KEY } })
       .then((res) => res.json())
       .then(setHealth)
       .catch(() => setHealth("error"));

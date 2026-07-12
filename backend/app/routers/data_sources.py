@@ -3,9 +3,11 @@ synthetic (and why). Surfaced in the UI as a legend/tooltip rather than
 buried in docs - see the root README and ingestion/README.md for the
 same breakdown in prose form.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(prefix="/api/data-sources", tags=["data-sources"])
+from app.deps import require_api_key
+
+router = APIRouter(prefix="/api/data-sources", tags=["data-sources"], dependencies=[Depends(require_api_key)])
 
 DATA_SOURCES = {
     "players": {

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.deps import require_api_key
 
-router = APIRouter(prefix="/api/session", tags=["session"])
+router = APIRouter(prefix="/api/session", tags=["session"], dependencies=[Depends(require_api_key)])
 
 
 class SelectTeamRequest(BaseModel):

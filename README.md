@@ -12,6 +12,7 @@ The public product name is intentionally kept **out of every layer except the fr
 - [Prerequisites](#prerequisites)
 - [Docker Compose setup SOP](#docker-compose-setup-sop)
 - [What's already inside each container](#whats-already-inside-each-container)
+- [Nginx + API key gate](#nginx--api-key-gate)
 - [The product: public vs. private data](#the-product-public-vs-private-data)
 - [Populating real data (ingestion)](#populating-real-data-ingestion)
 - [Data persistence SOP](#data-persistence-sop)
@@ -21,12 +22,13 @@ The public product name is intentionally kept **out of every layer except the fr
 
 ## Current status
 
-Infrastructure base is up: three containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend) on one Docker network, each independently health-checked, with a persistent volume for ClickHouse. The frontend is still a minimal placeholder page — no login/dashboard/chat UI yet — but the **backend API is real and functional**:
+Infrastructure base is up: four containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend, Nginx) on one Docker network, each independently health-checked, with persistent volumes for ClickHouse and generated charts. The frontend is still a minimal placeholder page — no login/dashboard/chat UI yet — but the **backend API is real and functional**:
 
 - Every team has a **full, real 26-man squad** (Wikipedia's 2026 World Cup squads, cross-referenced with TheSportsDB for photos), plus real clubs/matches/trophies and synthetic values for fields with no free source — see [The product: public vs. private data](#the-product-public-vs-private-data).
 - **Access control is implemented and enforced**, not just designed: `GET /api/dashboard/{team}` (full, own team only) and `GET /api/inspect/{team}` (redacted, any other team) both run through one shared `access_control.py`.
 - **Charts render server-side and are callable directly** — `GET /api/charts/{team}/injury-risk` and `/top-performers` return a PNG URL with zero LLM involvement. This is the deterministic half of the "hybrid" chat design described below.
 - **Data provenance is a first-class API**, not just a doc comment — `GET /api/data-sources` tells you exactly which fields are real (and from where) vs. synthetic (and why).
+- **Nginx is the front door with an API-key gate** — see [Nginx + API key gate](#nginx--api-key-gate).
 
 No LLM key is configured yet — that's the next phase (LangGraph agent + RAG), listed in [Roadmap](#roadmap).
 
@@ -36,11 +38,12 @@ See `architecture/ARCHITECTURE.md` for the full narrative and `architecture/diag
 
 ```mermaid
 flowchart LR
-    ext["TheSportsDB (real) + mock generators"] --> raw["raw_data_store"]
+    ext["Wikipedia + TheSportsDB (real) + mock generators"] --> raw["raw_data_store"]
     raw --> ingest["deploy_elt.py\n(host script)"]
     ingest --> ch["ClickHouse\nsquad_data_store + 7 team DBs"]
     ch --> backend["FastAPI backend"]
-    backend --> frontend["Frontend (placeholder page)"]
+    nginx["Nginx\nX-API-Key gate"] --> backend
+    nginx --> frontend["Frontend (placeholder page)"]
 ```
 
 ## Repo layout
@@ -51,10 +54,11 @@ flowchart LR
 ├── obsidian-graph/      # backlinked notes mapping how everything connects
 ├── database/clickhouse/ # schema (init/) + SOPs
 ├── backend/             # FastAPI app
-├── ingestion/           # host-run ELT pipeline: real TheSportsDB data + synthetic fields -> ClickHouse
+├── ingestion/           # host-run ELT pipeline: real Wikipedia/TheSportsDB data + synthetic fields -> ClickHouse
 ├── embedding_job/       # placeholder — Chroma embedding job (RAG phase)
 ├── knowledge_base/      # placeholder — bind-mounted tactical docs (RAG phase)
 ├── frontend/            # minimal Vite+React+Tailwind placeholder — the only place brand name/UI lives
+├── nginx/templates/     # reverse proxy + X-API-Key gate (envsubst template)
 ├── docker-compose.yml
 ├── .env.example
 └── .env                 # your local copy, gitignored — never committed
@@ -67,7 +71,7 @@ flowchart LR
 
 ## Docker Compose setup SOP
 
-Three containers — `clickhouse`, `backend`, `frontend` — on one Docker network (`squadnet`), brought up together with a single `docker-compose.yml`. Steps below take you from a fresh clone to all three verified healthy.
+Four containers — `clickhouse`, `backend`, `frontend`, `nginx` — on one Docker network (`squadnet`), brought up together with a single `docker-compose.yml`. Steps below take you from a fresh clone to all four verified healthy.
 
 **1. Clone and configure**
 
@@ -83,7 +87,7 @@ cp .env.example .env       # already has working defaults; edit if you have API 
 docker compose up -d --build
 ```
 
-This creates, in order: the `squadnet` network → the `clickhouse_data` named volume → the `clickhouse` container (schema self-creates on first boot from `database/clickhouse/init/`) → the `backend` container (waits for ClickHouse to report healthy) → the `frontend` container (waits for the backend to report healthy).
+This creates, in order: the `squadnet` network → the `clickhouse_data`/`charts_data` named volumes → the `clickhouse` container (schema self-creates on first boot from `database/clickhouse/init/`) → the `backend` container (waits for ClickHouse to report healthy) → the `frontend` container (waits for the backend to report healthy) → the `nginx` container (waits for both, reverse-proxies everything behind the `X-API-Key` gate).
 
 **3. Watch it come up**
 
@@ -91,20 +95,24 @@ This creates, in order: the `squadnet` network → the `clickhouse_data` named v
 docker compose ps
 ```
 
-All three should settle on `Up ... (healthy)` within about 30 seconds on a first build (ClickHouse takes the longest — it's creating 8 databases). If `clickhouse` briefly shows `unhealthy` right after the very first boot, give it one restart: `docker compose restart clickhouse` (a known one-time race between its init-script bootstrap and the real server binding its ports — see `database/clickhouse/README.md`).
+All four should settle on `Up ... (healthy)` within about 30 seconds on a first build (ClickHouse takes the longest — it's creating 9 databases). If `clickhouse` briefly shows `unhealthy` right after the very first boot, give it one restart: `docker compose restart clickhouse` (a known one-time race between its init-script bootstrap and the real server binding its ports — see `database/clickhouse/README.md`).
 
 **4. Verify each service individually**
 
 ```bash
 # ClickHouse — HTTP interface directly
 curl "http://localhost:8123/ping"                                            # Ok.
-curl "http://localhost:8123/?query=SHOW+DATABASES" --user default:changeme   # lists all 8 DBs
+curl "http://localhost:8123/?query=SHOW+DATABASES" --user default:changeme   # lists all 9 DBs
 
-# Backend — FastAPI
-curl localhost:8000/api/health              # {"status": "ok"}
-curl localhost:8000/api/health/clickhouse   # confirms squad_data_store + all 7 team DBs exist
+# Backend — FastAPI (direct, bypassing Nginx — still gated by its own X-API-Key check)
+curl localhost:8000/api/health                                                    # {"status": "ok"}, no key needed
+curl -H "X-API-Key: $(grep ^API_KEY= .env | cut -d= -f2)" localhost:8000/api/data-sources
 
-# Frontend — placeholder page (calls the backend health check itself)
+# Through Nginx (port 80) — the real front door, same gate enforced again
+curl -H "X-API-Key: $(grep ^API_KEY= .env | cut -d= -f2)" localhost/api/data-sources
+curl localhost/                                                                    # frontend passthrough, no key needed
+
+# Frontend — placeholder page (calls the backend health check itself, key baked in at build time)
 open http://localhost:3000
 ```
 
@@ -125,8 +133,20 @@ open http://localhost:3000
 | Container | Image / base | Exposed on host | What's there right now |
 |---|---|---|---|
 | `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 9 databases: `squad_data_store` (master, partitioned by `team_code`), `raw_data_store` (raw API dump audit trail), + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each team DB has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`), **populated** — real squad/match/trophy data plus synthetic fields, via `ingestion/`. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real *private* data). |
-| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}` — session + access-controlled squad data. `GET /api/data-sources` — real-vs-synthetic transparency breakdown. `GET /api/charts/{team}/injury-risk`, `/top-performers`, `GET /api/charts/file/{filename}` — server-rendered matplotlib PNGs, callable with no LLM. `chat`/LangGraph endpoint comes in the next phase. |
-| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check and renders the result. No login/dashboard/chat UI yet — the backend API above is ready for it. |
+| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness, no key needed. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}`, `GET /api/data-sources`, `GET /api/charts/{team}/injury-risk`\|`/top-performers` — all require `X-API-Key`. `GET /api/charts/file/{filename}` — serves the PNG, no key (can't attach headers to `<img src>`; access control already happened at generation time). `chat`/LangGraph endpoint comes in the next phase. |
+| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check (with `X-API-Key` attached) and renders the result. No login/dashboard/chat UI yet — the backend API above is ready for it. |
+| `nginx` | `nginx:1.27-alpine` | `80` | Reverse proxy: `/api/*` → `backend:8000` (gated by the same `X-API-Key`, checked again independently), `/api/charts/file/*` → `backend:8000` (ungated, see above), everything else → `frontend:80`. Config is an envsubst template (`nginx/templates/default.conf.template`) so the real key never has to be hardcoded into a committed file. |
+
+## Nginx + API key gate
+
+A shared secret (`API_KEY` in `.env`) is checked **twice**, independently: once by Nginx before it ever proxies a request to the backend, and again by the backend itself via a FastAPI dependency (`require_api_key` in `app/deps.py`). Either check failing returns `401`.
+
+- **Why check it twice?** Right now `backend`'s port `8000` (and `frontend`'s `3000`) are still published directly to the host for dev convenience, so Nginx isn't the *only* way in — without the backend's own check, hitting `:8000` directly would skip the gate entirely. In a real deployment you'd close those direct ports so Nginx is the sole entrypoint (see the Roadmap).
+- **Which routes are gated:** everything except `GET /api/health*` (so Docker's own healthcheck, which calls this with no headers, keeps working) and `GET /api/charts/file/{filename}` (a plain `<img src>` can't attach a custom header — the private data behind that image was already access-controlled when the chart was generated).
+- **How the secret reaches Nginx without being committed to git:** `nginx/templates/default.conf.template` contains a literal `${API_KEY}` placeholder; the official Nginx image auto-runs `envsubst` on any `*.template` file under `/etc/nginx/templates/` at container start, substituting from the container's own environment (`env_file: .env`). The rendered config is never written back to the repo.
+- **How the frontend gets it:** Vite bakes `VITE_*` variables into the JS bundle at *build* time, so `docker-compose.yml` passes `API_KEY` in as a build arg (`VITE_API_KEY`) to the frontend's Dockerfile. Worth being honest about the limit here: **this is inherently visible in the shipped browser bundle** (confirmed — `grep` the built JS and the key is right there in plain text). It's a real gate against casual/automated direct API access (bots, scanners, curl-without-context), not a true secret-keeping boundary — a determined user can always read it out of their own browser. That's an inherent property of any client-side "key" in a public web app, not a bug in this implementation.
+
+Generate your own key any time with `python3 -c "import secrets; print(secrets.token_hex(24))"` and drop it into `.env`'s `API_KEY`.
 
 ## The product: public vs. private data
 
@@ -220,8 +240,8 @@ Phases still to come, in order:
 1. ~~**Uniform data ingestion**~~ — done: real 26-man squads (Wikipedia + TheSportsDB), matches, trophies, plus synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`. Still open: API-Football (real `public_stats`, needs a paid key), Transfermarkt/RSS fetchers, and an Airflow layer to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
 2. ~~**Access control + REST API**~~ — done: `access_control.py` (single source of truth), `session`/`dashboard`/`inspect` routers, `data-sources` transparency endpoint.
 3. ~~**Charts (deterministic half)**~~ — done: `backend/app/charts/generators.py` + `/api/charts/*` router, callable directly with zero LLM involvement — this is the non-agentic half of the "hybrid" chat design.
-4. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB.
-5. **Agentic layer (agentic half of "hybrid")** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint. Its `chart_node` calls the *same* chart generator functions the deterministic router uses for free-form questions. This is when an LLM key is finally needed.
-6. **Real frontend** — login, dashboard, inspect, and chat pages (with quick-reply "chips" that call the chart API directly, no LLM) replace the current placeholder page in `frontend/`.
-7. **Nginx + full docker-compose** — reverse proxy in front of frontend + backend, remaining named volume (`chroma_data`).
-8. **Deployment** — containerized services on a host that supports the full Compose stack; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).
+4. ~~**Nginx + API key gate**~~ — done: reverse proxy in front of backend + frontend, `X-API-Key` enforced independently by both Nginx and the backend. Still open: closing the direct `8000`/`3000` host ports so Nginx is the *only* way in (kept open for now, dev convenience).
+5. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB, remaining named volume (`chroma_data`).
+6. **Agentic layer (agentic half of "hybrid")** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint. Its `chart_node` calls the *same* chart generator functions the deterministic router uses for free-form questions. This is when an LLM key is finally needed.
+7. **Real frontend** — login, dashboard, inspect, and chat pages (with quick-reply "chips" that call the chart API directly, no LLM) replace the current placeholder page in `frontend/`.
+8. **Deployment** — containerized services on a host that supports the full Compose stack, direct backend/frontend ports closed so Nginx is the sole entrypoint; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).
