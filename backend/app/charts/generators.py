@@ -11,6 +11,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless - no display server available in a container
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 from app.config import get_settings
 from app.db.clickhouse_client import get_client
@@ -108,3 +109,32 @@ def top_performers_chart(team_code: str) -> str:
     ax.tick_params(axis="y", colors=TEXT)
 
     return _save(fig, f"{team_code}_top_performers.png")
+
+
+def wage_overview_chart(team_code: str) -> str:
+    """Horizontal bar chart of the squad's top 10 weekly wages - salaries is
+    private data (see access_control.py), so like injury_risk_chart this is
+    only ever generated for the active team. Uses seaborn (over plain
+    matplotlib) purely for the built-in bar-plot styling; same _style_axes
+    dark-theme pass applies on top either way."""
+    client = get_client()
+    result = client.query(f"""
+        SELECT p.name, sal.weekly_wage
+        FROM {team_code}.salaries sal
+        JOIN {team_code}.players p ON p.player_id = sal.player_id
+        ORDER BY sal.weekly_wage DESC
+        LIMIT 10
+    """)
+    rows = result.result_rows
+    if not rows:
+        raise ValueError(f"No salaries data for '{team_code}' - run the ELT pipeline first")
+
+    names = [row[0] for row in rows][::-1]
+    wages = [row[1] for row in rows][::-1]
+
+    fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=BG)
+    sns.barplot(x=wages, y=names, ax=ax, color=INDIGO)
+    _style_axes(ax, f"Weekly wage bill (top 10) - {team_code.capitalize()}", "Weekly wage (£)", "")
+    ax.tick_params(axis="y", colors=TEXT)
+
+    return _save(fig, f"{team_code}_wage_overview.png")

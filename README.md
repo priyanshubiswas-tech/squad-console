@@ -13,6 +13,7 @@ The public product name is intentionally kept **out of every layer except the fr
 - [Docker Compose setup SOP](#docker-compose-setup-sop)
 - [What's already inside each container](#whats-already-inside-each-container)
 - [Nginx + API key gate](#nginx--api-key-gate)
+- [The hybrid chat design: 3 chips, zero LLM](#the-hybrid-chat-design-3-chips-zero-llm)
 - [The product: public vs. private data](#the-product-public-vs-private-data)
 - [Populating real data (ingestion)](#populating-real-data-ingestion)
 - [Data persistence SOP](#data-persistence-sop)
@@ -26,7 +27,8 @@ Infrastructure base is up: four containers (ClickHouse, FastAPI backend, a place
 
 - Every team has a **full, real 26-man squad** (Wikipedia's 2026 World Cup squads, cross-referenced with TheSportsDB for photos), plus real clubs/matches/trophies and synthetic values for fields with no free source — see [The product: public vs. private data](#the-product-public-vs-private-data).
 - **Access control is implemented and enforced**, not just designed: `GET /api/dashboard/{team}` (full, own team only) and `GET /api/inspect/{team}` (redacted, any other team) both run through one shared `access_control.py`.
-- **Charts render server-side and are callable directly** — `GET /api/charts/{team}/injury-risk` and `/top-performers` return a PNG URL with zero LLM involvement. This is the deterministic half of the "hybrid" chat design described below.
+- **Charts render server-side and are callable directly** — `GET /api/charts/{team}/injury-risk` and `/top-performers` return a PNG URL with zero LLM involvement. This is the deterministic half of the "hybrid" chat design.
+- **3 analyst "chip" reports are built and live** — `GET /api/reports/fitness`, `/top-performers`, `/financial` return a fixed text template with *live* stats plus a chart, in the exact shape the future LLM chat responses will use. See [The hybrid chat design](#the-hybrid-chat-design-3-chips-zero-llm).
 - **Data provenance is a first-class API**, not just a doc comment — `GET /api/data-sources` tells you exactly which fields are real (and from where) vs. synthetic (and why).
 - **Nginx is the front door with an API-key gate** — see [Nginx + API key gate](#nginx--api-key-gate).
 
@@ -133,7 +135,7 @@ open http://localhost:3000
 | Container | Image / base | Exposed on host | What's there right now |
 |---|---|---|---|
 | `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 9 databases: `squad_data_store` (master, partitioned by `team_code`), `raw_data_store` (raw API dump audit trail), + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each team DB has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`), **populated** — real squad/match/trophy data plus synthetic fields, via `ingestion/`. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real *private* data). |
-| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness, no key needed. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}`, `GET /api/data-sources`, `GET /api/charts/{team}/injury-risk`\|`/top-performers` — all require `X-API-Key`. `GET /api/charts/file/{filename}` — serves the PNG, no key (can't attach headers to `<img src>`; access control already happened at generation time). `chat`/LangGraph endpoint comes in the next phase. |
+| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness, no key needed. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}`, `GET /api/data-sources`, `GET /api/charts/{team}/injury-risk`\|`/top-performers`, `GET /api/reports/fitness`\|`/top-performers`\|`/financial` — all require `X-API-Key`. `GET /api/charts/file/{filename}` — serves the PNG, no key (can't attach headers to `<img src>`; access control already happened at generation time). `chat`/LangGraph endpoint comes in the next phase. |
 | `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check (with `X-API-Key` attached) and renders the result. No login/dashboard/chat UI yet — the backend API above is ready for it. |
 | `nginx` | `nginx:1.27-alpine` | `80` | Reverse proxy: `/api/*` → `backend:8000` (gated by the same `X-API-Key`, checked again independently), `/api/charts/file/*` → `backend:8000` (ungated, see above), everything else → `frontend:80`. Config is an envsubst template (`nginx/templates/default.conf.template`) so the real key never has to be hardcoded into a committed file. |
 
@@ -147,6 +149,20 @@ A shared secret (`API_KEY` in `.env`) is checked **twice**, independently: once 
 - **How the frontend gets it:** Vite bakes `VITE_*` variables into the JS bundle at *build* time, so `docker-compose.yml` passes `API_KEY` in as a build arg (`VITE_API_KEY`) to the frontend's Dockerfile. Worth being honest about the limit here: **this is inherently visible in the shipped browser bundle** (confirmed — `grep` the built JS and the key is right there in plain text). It's a real gate against casual/automated direct API access (bots, scanners, curl-without-context), not a true secret-keeping boundary — a determined user can always read it out of their own browser. That's an inherent property of any client-side "key" in a public web app, not a bug in this implementation.
 
 Generate your own key any time with `python3 -c "import secrets; print(secrets.token_hex(24))"` and drop it into `.env`'s `API_KEY`.
+
+## The hybrid chat design: 3 chips, zero LLM
+
+The planned chat UI is a chatbox at the bottom (free-form questions, answered by the LangGraph agent once it exists — needs an LLM key) with exactly **3 quick-reply "chips"** above it. Clicking a chip never touches an LLM — it hits one of 3 new REST endpoints that query ClickHouse directly and come back instantly:
+
+| Chip | Endpoint | Data | Chart |
+|---|---|---|---|
+| 🏥 Fitness & Injury Risk | `GET /api/reports/fitness` | private (`training_load` + `injuries`) | fatigue trend line |
+| ⭐ Top Performers | `GET /api/reports/top-performers` | public (`public_stats`) | rating bar chart |
+| 💰 Financial Overview | `GET /api/reports/financial` | private (`salaries`) | wage bill bar chart |
+
+Each returns `{"text": "...", "chart_url": "..."}` — a **fixed text template, never LLM-generated**, with the actual numbers pulled live from ClickHouse on every call (so re-clicking a chip after `deploy_elt.py` runs again shows updated stats). This is deliberately the *exact same shape* the LangGraph chat endpoint will return later, so the frontend renders a chip's answer and an LLM's answer through one identical code path — click a chip or type a question, same-looking chat bubble either way. That equivalence is the actual "hybrid" the project is named for.
+
+**On the "one database per tenant" query pattern**: this schema is one ClickHouse database per team, not a `tenant_id` column, so the team name can't be bound as a normal SQL parameter (parameter binding targets values, never table/database identifiers). `app/reports/generators.py` and `app/charts/generators.py` interpolate `team_code` directly into the SQL string — safe only because every call site has already run it through `get_active_team`'s check against `settings.team_list` (`app/deps.py`), never raw user input. Where a query filters by an actual value instead (e.g. the top-5 `LIMIT` in the performers report), that value *is* bound as a real ClickHouse parameter (`{limit:UInt8}`) — see `backend/README.md` for the full explanation with both patterns side by side.
 
 ## The product: public vs. private data
 
@@ -241,7 +257,8 @@ Phases still to come, in order:
 2. ~~**Access control + REST API**~~ — done: `access_control.py` (single source of truth), `session`/`dashboard`/`inspect` routers, `data-sources` transparency endpoint.
 3. ~~**Charts (deterministic half)**~~ — done: `backend/app/charts/generators.py` + `/api/charts/*` router, callable directly with zero LLM involvement — this is the non-agentic half of the "hybrid" chat design.
 4. ~~**Nginx + API key gate**~~ — done: reverse proxy in front of backend + frontend, `X-API-Key` enforced independently by both Nginx and the backend. Still open: closing the direct `8000`/`3000` host ports so Nginx is the *only* way in (kept open for now, dev convenience).
-5. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB, remaining named volume (`chroma_data`).
-6. **Agentic layer (agentic half of "hybrid")** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint. Its `chart_node` calls the *same* chart generator functions the deterministic router uses for free-form questions. This is when an LLM key is finally needed.
-7. **Real frontend** — login, dashboard, inspect, and chat pages (with quick-reply "chips" that call the chart API directly, no LLM) replace the current placeholder page in `frontend/`.
-8. **Deployment** — containerized services on a host that supports the full Compose stack, direct backend/frontend ports closed so Nginx is the sole entrypoint; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).
+5. ~~**3 chip reports (deterministic chat half)**~~ — done: `backend/app/reports/generators.py` + `/api/reports/*` router — fixed text templates with live ClickHouse stats, matching the exact `{text, chart_url}` shape the LangGraph chat endpoint will return. See "The hybrid chat design" above.
+6. **RAG pipeline** — `knowledge_base/` content, `embedding_job/`, ChromaDB, remaining named volume (`chroma_data`).
+7. **Agentic layer (agentic half of "hybrid")** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint. Its `chart_node` calls the *same* chart generator functions the 3 chips use for free-form questions. This is when an LLM key is finally needed.
+8. **Real frontend** — login, dashboard, inspect, and chat pages (chatbox at the bottom, the 3 chips above it) replace the current placeholder page in `frontend/`.
+9. **Deployment** — containerized services on a host that supports the full Compose stack, direct backend/frontend ports closed so Nginx is the sole entrypoint; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).

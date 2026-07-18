@@ -3,3 +3,4 @@ uvicorn[standard]==0.32.1
 pydantic-settings==2.7.0
 clickhouse-connect==0.8.9
 matplotlib==3.9.2
+seaborn==0.13.2
