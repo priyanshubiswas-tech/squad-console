@@ -8,6 +8,7 @@ volumes:
   clickhouse_data:
   charts_data:
   chroma_data:
+  airflow_home:
 
 services:
   clickhouse:
@@ -79,6 +80,39 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    networks:
+      - squadnet
+    ports:
+      - "8080:8080"  # Airflow UI - not routed through Nginx, local-only by design
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      # Distinct from the shared CLICKHOUSE_HOST in .env (see ingestion/.../config.py)
+      # - this is what lets the ELT pipeline run unmodified in-network here.
+      INGESTION_CLICKHOUSE_HOST: clickhouse
+    env_file: .env
+    volumes:
+      - airflow_home:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./ingestion/elt-pipeline-py-script:/opt/airflow/ingestion
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command: standalone
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
 
   nginx:
     image: nginx:1.27-alpine

@@ -8,7 +8,8 @@ export type TeamCode =
   | "argentina"
   | "spain"
   | "germany"
-  | "portugal";
+  | "portugal"
+  | "capeverde";
 
 export interface TeamInfo {
   code: TeamCode;
@@ -25,6 +26,7 @@ export const TEAMS: TeamInfo[] = [
   { code: "spain", name: "Spain", shortCode: "SP", manager: "Luis de la Fuente" },
   { code: "germany", name: "Germany", shortCode: "GE", manager: "Julian Nagelsmann" },
   { code: "portugal", name: "Portugal", shortCode: "PO", manager: "Roberto Martinez" },
+  { code: "capeverde", name: "Cape Verde", shortCode: "CV", manager: "Bubista" },
 ];
 
 export function teamInfo(code: string): TeamInfo | undefined {

@@ -6,9 +6,9 @@ This is the **only** place in the repo where the product's public brand name ("T
 
 ## Pages
 
-- **`Login`** — grid of 7 crest cards, tap to select (no text input). Calls `POST /api/session/select-team`, stores `{team_code, manager_name}` in `TeamContext` (localStorage-backed), navigates to `/dashboard`.
+- **`Login`** — grid of 8 crest cards (incl. Cape Verde, with a layered crest+manager-photo badge), tap to select (no text input). Calls `POST /api/session/select-team`, stores `{team_code, manager_name}` in `TeamContext` (localStorage-backed), navigates to `/dashboard`.
 - **`Dashboard`** — own team, full data: metric cards, formation cards (recommended one highlighted), injury list, top performers, a sortable squad table.
-- **`InspectSquad`** — team picker for the other 6 teams; blurred placeholders (lock icon + "Private to {team} staff") wherever the backend sent `null` for injuries/salaries/training load; formations show name + `suitable_vs` only.
+- **`InspectSquad`** — team picker for the other 7 teams; blurred placeholders (lock icon + "Private to {team} staff") wherever the backend sent `null` for injuries/salaries/training load; formations show name + `suitable_vs` only.
 - **`Tactics`** — full formation library for the active team, each with an SVG pitch diagram (`components/PitchDiagram.tsx`) built from the real `players_json` lineup.
 - **`News`** — honest placeholder; the RSS fetcher isn't built yet (see root README roadmap).
 - **`ChatPanel`** (persistent, every page) — 3 chips (`/api/reports/*`, zero LLM) + a free-form chatbox (`/api/chat`, the LangGraph agent - gracefully degrades without an LLM key). Both render through the same message-bubble code, since both return `{text, chart_url}`.
@@ -32,3 +32,7 @@ Set `VITE_BACKEND_URL` if the backend isn't at `http://localhost:8000`, and `VIT
 ## Docker
 
 Multi-stage build: `node:20-alpine` builds the static bundle (receiving `VITE_API_KEY` as a build arg from `docker-compose.yml`, since Vite bakes `VITE_*` vars in at build time), `nginx:alpine` serves it on port 80 (mapped to `3000` on the host). `nginx.conf` has a SPA fallback (`try_files $uri $uri/ /index.html`) so client-side routes survive a hard refresh.
+
+## Vercel
+
+`vercel.json` adds the same SPA rewrite (`/(.*) -> /index.html`) as `nginx.conf`, since Vercel's static hosting has no equivalent by default and 404s on any client-side route otherwise. Deploy with `VITE_BACKEND_URL` and `VITE_API_KEY` passed as build-time env (`--build-env`, since Vite only bakes vars in at build) pointing at a publicly reachable backend — see the root README's [Deployment: Vercel + Cloudflare Tunnel](../README.md#deployment-vercel--cloudflare-tunnel) for the full walkthrough, including the CORS/cookie/SSO-protection gotchas.

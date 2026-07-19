@@ -1,6 +1,6 @@
 # ChromaDB
 
-**Status**: built and populated — 15 collections, real content. Not yet queried by anything (that's [[langgraph-agent]]'s `rag_retriever` node, not built yet).
+**Status**: built and populated — 17 collections, real content. Queried live by [[langgraph-agent]]'s `rag_retriever` node on every chat call.
 
 The vector store for tactical knowledge. Populated by [[embedding-job]] reading `knowledge_base/`, will be queried by [[langgraph-agent]]'s `rag_retriever` node.
 

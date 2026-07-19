@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     # API gateway - shared secret also checked by Nginx (see nginx/templates/)
     api_key: str = "changeme-generate-a-real-secret"
 
+    # Comma-separated list of allowed browser origins for the session cookie
+    # flow (CORSMiddleware, see main.py). Must be explicit origins, not "*",
+    # since allow_credentials=True is required for the cookie to work.
+    cors_origins: str = "http://localhost:3000"
+
     # ClickHouse
     clickhouse_host: str = "clickhouse"
     clickhouse_port: int = 8123
@@ -33,7 +38,7 @@ class Settings(BaseSettings):
     transfermarkt_api_base: str = "http://transfermarkt-api:8000"
 
     # App config
-    teams: str = "england,france,brazil,argentina,spain,germany,portugal"
+    teams: str = "england,france,brazil,argentina,spain,germany,portugal,capeverde"
     ingestion_interval_hours: int = 6
     chart_output_dir: str = "/app/charts"
 
@@ -45,10 +50,15 @@ class Settings(BaseSettings):
     manager_spain: str = ""
     manager_germany: str = ""
     manager_portugal: str = ""
+    manager_capeverde: str = ""
 
     @property
     def team_list(self) -> list[str]:
         return [t.strip() for t in self.teams.split(",") if t.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def managers(self) -> dict:
@@ -60,6 +70,7 @@ class Settings(BaseSettings):
             "spain": self.manager_spain,
             "germany": self.manager_germany,
             "portugal": self.manager_portugal,
+            "capeverde": self.manager_capeverde,
         }
 
 

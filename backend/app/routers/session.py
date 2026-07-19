@@ -18,5 +18,9 @@ def select_team(payload: SelectTeamRequest, response: Response) -> dict:
     if team_code not in settings.team_list:
         raise HTTPException(status_code=404, detail=f"Unknown team '{team_code}'")
 
-    response.set_cookie(key="X-Active-Team", value=team_code, httponly=True, samesite="lax")
+    # samesite="none" + secure=True is required once the frontend and backend
+    # are on different sites (e.g. Vercel <-> tunnel domain) - browsers won't
+    # send a Lax cookie cross-site. Secure cookies still work on http://localhost
+    # since browsers treat it as a potentially-trustworthy origin.
+    response.set_cookie(key="X-Active-Team", value=team_code, httponly=True, samesite="none", secure=True)
     return {"team_code": team_code, "manager_name": settings.managers.get(team_code, "")}

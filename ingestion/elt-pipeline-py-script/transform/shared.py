@@ -2,6 +2,21 @@
 import re
 from datetime import date
 
+# Canonical team_code -> real-world display name, shared by every stage that
+# needs to match our lowercase internal code against an external API/page's
+# actual team name (Wikipedia section titles, TheSportsDB's strHomeTeam/
+# strAwayTeam). Single source of truth - do not duplicate this dict.
+DISPLAY_NAME = {
+    "england": "England",
+    "france": "France",
+    "brazil": "Brazil",
+    "argentina": "Argentina",
+    "spain": "Spain",
+    "germany": "Germany",
+    "portugal": "Portugal",
+    "capeverde": "Cape Verde",
+}
+
 
 def calc_age(year: int, month: int, day: int) -> int:
     born = date(year, month, day)

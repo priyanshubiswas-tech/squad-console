@@ -27,7 +27,19 @@ server {
     }
 
     location /api/ {
-        if ($http_x_api_key != "${API_KEY}") {
+        # CORS preflight requests never carry the app's custom headers (browsers
+        # only send Access-Control-Request-Headers on OPTIONS) - the backend's
+        # own CORSMiddleware answers these, so let them through the key gate.
+        # (Two sequential `if`s that both `proxy_pass` would double-respond on
+        # OPTIONS, so the method check folds into the same key_ok flag instead.)
+        set $key_ok 0;
+        if ($http_x_api_key = "${API_KEY}") {
+            set $key_ok 1;
+        }
+        if ($request_method = OPTIONS) {
+            set $key_ok 1;
+        }
+        if ($key_ok = 0) {
             return 401;
         }
         proxy_pass http://backend:8000;

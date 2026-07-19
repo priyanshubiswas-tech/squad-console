@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import requests
 
 from config import TEAMS, THESPORTSDB_KEY
+from transform.shared import DISPLAY_NAME
 
 BASE_URL = f"https://www.thesportsdb.com/api/v1/json/{THESPORTSDB_KEY}"
 
@@ -43,7 +44,7 @@ def dump_raw(client, team_code: str, entity: str, source_url: str, payload_text:
 
 
 def fetch_and_dump_team(client, team_code: str) -> None:
-    team_id = resolve_team_id(team_code)
+    team_id = resolve_team_id(DISPLAY_NAME[team_code])
 
     calls = [
         ("team", f"{BASE_URL}/lookupteam.php?id={team_id}"),

@@ -13,7 +13,7 @@ CHROMA_HOST = "localhost"
 CHROMA_PORT = int(os.environ.get("CHROMA_HOST_PORT", "8001"))
 
 TEAMS = [t.strip() for t in os.environ.get(
-    "TEAMS", "england,france,brazil,argentina,spain,germany,portugal"
+    "TEAMS", "england,france,brazil,argentina,spain,germany,portugal,capeverde"
 ).split(",") if t.strip()]
 
 KNOWLEDGE_BASE_DIR = Path(__file__).resolve().parent.parent / "knowledge_base"

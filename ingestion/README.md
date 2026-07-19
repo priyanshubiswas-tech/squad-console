@@ -9,10 +9,10 @@ Extract (Wikipedia + TheSportsDB, real)  ->  raw_data_store           [fetchers/
 Transform (real fields)                  ->  squad_data_store (master) [transform/]
 Mock-generate (synthetic,
   keyed to real player_ids)              ->  squad_data_store (master) [mock_generators/]
-Partition                                ->  the 7 per-team databases  [partition.py]
+Partition                                ->  the 8 per-team databases  [partition.py]
 ```
 
-Every stage is a plain Python function that only reads/writes ClickHouse — no stage hands the next one data in memory. That's deliberate groundwork for the planned **Airflow** layer: each function below becomes one task/operator later, wired up with a schedule so re-fetching real data (and eventually renewing it as free/paid API keys allow) happens automatically instead of by re-running this script by hand.
+Every stage is a plain Python function that only reads/writes ClickHouse — no stage hands the next one data in memory. That's deliberate groundwork for the **Airflow** layer (`../airflow/`, now built): each function above is one task/operator in the `squad_console_elt` DAG, wired up with a schedule so re-fetching real data (and eventually renewing it as free/paid API keys allow) happens automatically instead of by re-running this script by hand. See the root README's [Scheduled ingestion with Airflow](../README.md#scheduled-ingestion-with-airflow).
 
 ## What's real vs. synthetic
 
@@ -39,10 +39,12 @@ python deploy_elt.py
 
 Requires the `clickhouse` container to be up (`docker compose up -d clickhouse` from the repo root) and reachable on `localhost:8123`. Every run is a full truncate-and-reload — safe to re-run any time, e.g. after editing a mock generator or when TheSportsDB's data changes.
 
+`config.py`'s `CLICKHOUSE_HOST` reads `INGESTION_CLICKHOUSE_HOST` (default `localhost`) rather than the shared `CLICKHOUSE_HOST` the root `.env` sets for the backend (`clickhouse`) — deliberately a separate variable, so a plain host run here never picks up the in-network hostname via `load_dotenv` and points itself at something it can't resolve. The `airflow` container is the one place that *does* set `INGESTION_CLICKHOUSE_HOST=clickhouse`, since it runs this same code in-network (see `docker-compose.yml`).
+
 ## Raw landing zone
 
 `raw_data_store.thesportsdb_dumps` (schema in `../database/clickhouse/init/08_raw_data_store.sql`) holds every API response byte-for-byte, timestamped, before any parsing happens — despite the table name, both fetchers write here (`entity` is `team`/`squad`/`matches` for TheSportsDB, `wikipedia_squad` for Wikipedia). Transform stages read the *latest* dump per team/entity from there — never from what the fetch stage returned in memory — so fetch and transform stay decoupled. It's append-only (never truncated), so it also doubles as an audit trail: if a transform script has a bug, you can fix it and re-run against exactly what the API returned, without re-fetching.
 
-## Next: Airflow
+## Airflow
 
-Not built yet. The long-term plan is to move `deploy_elt.py`'s stages into an Airflow DAG so the whole pipeline runs on a schedule with retries/checkups, and so real-time-ish refresh (once real API keys exist) doesn't require anyone to re-trigger it by hand.
+Built — `../airflow/dags/squad_elt_dag.py` runs these exact stages as the `squad_console_elt` DAG (extract → transform → mock-generate → partition), scheduled `@daily` with retries, instead of anyone re-triggering `deploy_elt.py` by hand. See the root README's [Scheduled ingestion with Airflow](../README.md#scheduled-ingestion-with-airflow) for how to unpause/trigger it and why it currently sits paused (TheSportsDB's free-tier key rate-limits under real load).

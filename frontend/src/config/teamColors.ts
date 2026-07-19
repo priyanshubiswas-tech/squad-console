@@ -10,6 +10,7 @@ export const TEAM_ACCENTS: Record<TeamCode, [string, string]> = {
   germany: ["#111827", "#dc2626"],
   spain: ["#dc2626", "#facc15"],
   portugal: ["#16a34a", "#dc2626"],
+  capeverde: ["#003893", "#cf2027"],
 };
 
 export function headerGradient(code: string): string {

@@ -8,17 +8,19 @@ from datetime import date as date_cls
 
 from config import TEAMS
 from db import get_latest_raw
+from transform.shared import DISPLAY_NAME
 
 
 def parse_matches(team_code: str, payload: str) -> list:
     events = json.loads(payload).get("results") or []
     rows = []
+    team_name = DISPLAY_NAME[team_code].lower()
     for event in events:
         home_score, away_score = event.get("intHomeScore"), event.get("intAwayScore")
         if home_score is None or away_score is None:
             continue  # not yet played
 
-        is_home = (event.get("strHomeTeam") or "").lower() == team_code.lower()
+        is_home = (event.get("strHomeTeam") or "").lower() == team_name
         goals_for = int(home_score) if is_home else int(away_score)
         goals_against = int(away_score) if is_home else int(home_score)
         opponent = event.get("strAwayTeam") if is_home else event.get("strHomeTeam")

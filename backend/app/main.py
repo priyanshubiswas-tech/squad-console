@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import get_settings
 from app.routers import chat, charts, dashboard, data_sources, health, inspect, reports, session
 
 app = FastAPI(title="squad-console backend")
@@ -9,8 +10,8 @@ app.add_middleware(
     CORSMiddleware,
     # Session uses an httpOnly cookie, and wildcard origins can't be
     # combined with allow_credentials (browsers reject it) - so this has to
-    # be an explicit origin, not "*", once cookies are in play.
-    allow_origins=["http://localhost:3000"],
+    # be an explicit origin list (CORS_ORIGINS env var), not "*".
+    allow_origins=get_settings().cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

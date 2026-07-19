@@ -16,14 +16,9 @@ from random import Random
 
 from config import TEAMS
 from db import get_latest_raw
-from transform.shared import calc_age, real_squad_entries, split_top_level, wikilink_display
+from transform.shared import DISPLAY_NAME, calc_age, real_squad_entries, split_top_level, wikilink_display
 
 POSITION_LABELS = {"GK": "Goalkeeper", "DF": "Defender", "MF": "Midfielder", "FW": "Forward"}
-
-DISPLAY_NAME = {
-    "england": "England", "france": "France", "brazil": "Brazil", "argentina": "Argentina",
-    "spain": "Spain", "germany": "Germany", "portugal": "Portugal",
-}
 
 PLAYER_TEMPLATE_RE = re.compile(r"\{\{nat fs g player\|(.+?)\}\}\n")
 AGE_TEMPLATE_RE = re.compile(r"birth date and age2\|df=y\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(\d+)")

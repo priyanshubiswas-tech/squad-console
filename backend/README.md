@@ -7,7 +7,7 @@ FastAPI service. Session, dashboard, inspect, data-sources, chart, report, and c
 `🔑` = requires an `X-API-Key` header matching `.env`'s `API_KEY` (checked here even though Nginx also checks it — see the root README's "Nginx + API key gate").
 
 - `GET /api/health` — liveness check.
-- `GET /api/health/clickhouse` — runs `SELECT 1` against ClickHouse and confirms the master DB + all 7 team DBs exist.
+- `GET /api/health/clickhouse` — runs `SELECT 1` against ClickHouse and confirms the master DB + all 8 team DBs exist.
 - `POST /api/session/select-team` 🔑 — body `{"team_code": "england"}`, sets the `X-Active-Team` httpOnly cookie every other endpoint reads, returns `{team_code, manager_name}`.
 - `GET /api/dashboard/{team_code}` 🔑 — full squad data. 403 if `team_code` isn't the active team (cookie) — own-team-only, no exceptions.
 - `GET /api/inspect/{team_code}` 🔑 — any team's data, filtered through `access_control.get_allowed_tables`: `injuries`/`salaries`/`training_load` come back `null` (present, not omitted), `formations` is stripped to `name`/`suitable_vs`.

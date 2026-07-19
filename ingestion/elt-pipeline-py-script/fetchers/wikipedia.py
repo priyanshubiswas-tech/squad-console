@@ -10,6 +10,7 @@ page structure can change.
 import requests
 
 from config import TEAMS
+from transform.shared import DISPLAY_NAME
 
 API_URL = "https://en.wikipedia.org/w/api.php"
 SQUADS_PAGE = "2026_FIFA_World_Cup_squads"
@@ -18,18 +19,6 @@ SQUADS_PAGE = "2026_FIFA_World_Cup_squads"
 # (e.g. plain "python-requests/x.x") with a 403 - a descriptive UA identifying
 # the project is required. See https://meta.wikimedia.org/wiki/User-Agent_policy
 HEADERS = {"User-Agent": "squad-console-ingestion/1.0 (https://github.com/priyanshubiswas-tech/squad-console)"}
-
-# Wikipedia's article uses the common English display name, not our
-# lowercase team_code.
-DISPLAY_NAME = {
-    "england": "England",
-    "france": "France",
-    "brazil": "Brazil",
-    "argentina": "Argentina",
-    "spain": "Spain",
-    "germany": "Germany",
-    "portugal": "Portugal",
-}
 
 
 def resolve_section_index(team_code: str) -> str:
