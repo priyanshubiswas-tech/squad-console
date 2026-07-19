@@ -24,17 +24,18 @@ The public product name is intentionally kept **out of every layer except the fr
 
 ## Current status
 
-Infrastructure base is up: four containers (ClickHouse, FastAPI backend, a placeholder React/Tailwind frontend, Nginx) on one Docker network, each independently health-checked, with persistent volumes for ClickHouse and generated charts. The frontend is still a minimal placeholder page — no login/dashboard/chat UI yet — but the **backend API is real and functional**:
+The full app is up and working end-to-end on real data, with **no LLM key required**: five containers (ClickHouse, ChromaDB, FastAPI backend, a real React/Tailwind frontend, Nginx) on one Docker network, each independently health-checked.
 
 - Every team has a **full, real 26-man squad** (Wikipedia's 2026 World Cup squads, cross-referenced with TheSportsDB for photos), plus real clubs/matches/trophies and synthetic values for fields with no free source — see [The product: public vs. private data](#the-product-public-vs-private-data).
 - **Access control is implemented and enforced**, not just designed: `GET /api/dashboard/{team}` (full, own team only) and `GET /api/inspect/{team}` (redacted, any other team) both run through one shared `access_control.py`.
-- **Charts render server-side and are callable directly** — `GET /api/charts/{team}/injury-risk` and `/top-performers` return a PNG URL with zero LLM involvement. This is the deterministic half of the "hybrid" chat design.
-- **3 analyst "chip" reports are built and live** — `GET /api/reports/fitness`, `/top-performers`, `/financial` return a fixed text template with *live* stats plus a chart, in the exact shape the future LLM chat responses will use. See [The hybrid chat design](#the-hybrid-chat-design-3-chips-zero-llm).
+- **The LangGraph agent is built and wired up** — the full 7-node graph (`intent_router → stats_tool → rag_retriever → access_filter → reasoner → chart_node → composer`) runs on every `/api/chat` call. Every node except `reasoner` needs no LLM; `reasoner` gracefully degrades to an honest "no LLM key configured" message instead of erroring, so the whole pipeline (real ClickHouse stats, real ChromaDB retrieval, access filtering, chart generation) is verifiably exercised today.
+- **3 analyst "chip" reports are built and live** — `GET /api/reports/fitness`, `/top-performers`, `/financial` return a fixed text template with *live* stats plus a chart, in the exact `{text, chart_url}` shape `/api/chat` also returns. See [The hybrid chat design](#the-hybrid-chat-design-3-chips-zero-llm).
+- **The real frontend is built** — login (7 crests), dashboard, inspect, tactics & formations (SVG pitch diagrams), news placeholder, and a persistent "Ask the analyst" chat panel with the 3 chips + a free-form chatbox, all matching the original design wireframes. Verified end-to-end in a real browser (Playwright) — see `frontend/README.md`.
 - **Data provenance is a first-class API**, not just a doc comment — `GET /api/data-sources` tells you exactly which fields are real (and from where) vs. synthetic (and why).
 - **Nginx is the front door with an API-key gate** — see [Nginx + API key gate](#nginx--api-key-gate).
-- **The RAG corpus is written and embedded** — real, researched tactical dossiers for all 7 teams (formations, key-player dependencies, honest weaknesses) plus public scouting reports, chunked and embedded into ChromaDB with zero LLM calls (a local sentence-transformers model). See [Knowledge base + RAG](#knowledge-base--rag-no-llm-needed-yet).
+- **The RAG corpus is written and embedded** — real, researched tactical dossiers for all 7 teams (formations, key-player dependencies, honest weaknesses) plus public scouting reports, chunked and embedded into ChromaDB with zero LLM calls (a local sentence-transformers model).
 
-No LLM key is configured yet — that's the last phase (the LangGraph agent itself, which reasons over what's now embedded), listed in [Roadmap](#roadmap).
+Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` any time to switch the chatbox from its graceful fallback message to real tactical reasoning — nothing else changes. See [Adding your LLM API key later](#adding-your-llm-api-key-later).
 
 ## Architecture
 
@@ -47,10 +48,10 @@ flowchart LR
     ingest --> ch["ClickHouse\nsquad_data_store + 7 team DBs"]
     kb["knowledge_base/\n(researched, real content)"] --> embed["embed_team_docs.py\n(host script)"]
     embed --> chroma["ChromaDB\n15 collections"]
-    ch --> backend["FastAPI backend"]
-    chroma -.->|"not wired up yet"| backend
+    ch --> backend["FastAPI backend\n+ LangGraph agent"]
+    chroma --> backend
     nginx["Nginx\nX-API-Key gate"] --> backend
-    nginx --> frontend["Frontend (placeholder page)"]
+    nginx --> frontend["Frontend\nlogin/dashboard/inspect/tactics/chat"]
 ```
 
 ## Repo layout
@@ -64,7 +65,7 @@ flowchart LR
 ├── ingestion/           # host-run ELT pipeline: real Wikipedia/TheSportsDB data + synthetic fields -> ClickHouse
 ├── embedding_job/       # host-run: chunks + embeds knowledge_base/ into ChromaDB, no LLM needed
 ├── knowledge_base/      # real, researched tactics/scouting content for all 7 teams + shared theory
-├── frontend/            # minimal Vite+React+Tailwind placeholder — the only place brand name/UI lives
+├── frontend/            # Vite+React+Tailwind app: login/dashboard/inspect/tactics/news + chat panel — the only place brand name/UI lives
 ├── nginx/templates/     # reverse proxy + X-API-Key gate (envsubst template)
 ├── docker-compose.yml
 ├── .env.example
@@ -140,9 +141,9 @@ open http://localhost:3000
 | Container | Image / base | Exposed on host | What's there right now |
 |---|---|---|---|
 | `clickhouse` | `clickhouse/clickhouse-server:24.8-alpine` | `8123` (HTTP), `9000` (native) | 9 databases: `squad_data_store` (master, partitioned by `team_code`), `raw_data_store` (raw API dump audit trail), + `england`/`france`/`brazil`/`argentina`/`spain`/`germany`/`portugal`. Each team DB has the 9 tables from `database/clickhouse/init/` (`players`, `public_stats`, `injuries`, `salaries`, `training_load`, `formations`, `clubs`, `trophies`, `matches`), **populated** — real squad/match/trophy data plus synthetic fields, via `ingestion/`. Default credentials from `.env` (`default` / `changeme` — change before this ever holds real *private* data). |
-| `chroma` | `chromadb/chroma:0.5.20` | `8001` (→ container port `8000`) | 15 collections, **populated**: `{team}_full` (private tactics) + `{team}_public` (public scouting) for all 7 teams, plus `shared_theory`. Embedded via `embedding_job/` using a local sentence-transformers model — no LLM key involved. Not yet queried by the backend (that's the LangGraph agent phase). |
-| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness, no key needed. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}`, `GET /api/data-sources`, `GET /api/charts/{team}/injury-risk`\|`/top-performers`, `GET /api/reports/fitness`\|`/top-performers`\|`/financial` — all require `X-API-Key`. `GET /api/charts/file/{filename}` — serves the PNG, no key (can't attach headers to `<img src>`; access control already happened at generation time). `chat`/LangGraph endpoint comes in the next phase. |
-| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | One static placeholder page (Vite + React + Tailwind) that calls the backend's ClickHouse health check (with `X-API-Key` attached) and renders the result. No login/dashboard/chat UI yet — the backend API above is ready for it. |
+| `chroma` | `chromadb/chroma:0.5.20` | `8001` (→ container port `8000`) | 15 collections, **populated and queried**: `{team}_full` (private tactics) + `{team}_public` (public scouting) for all 7 teams, plus `shared_theory`. Embedded via `embedding_job/` using a local sentence-transformers model — no LLM key involved. Queried live by the backend's `rag_retriever` node on every `/api/chat` call. |
+| `backend` | `python:3.12-slim` + FastAPI/uvicorn | `8000` | `GET /api/health`, `GET /api/health/clickhouse` — liveness, no key needed. `POST /api/session/select-team`, `GET /api/dashboard/{team}`, `GET /api/inspect/{team}`, `GET /api/data-sources`, `GET /api/charts/{team}/injury-risk`\|`/top-performers`, `GET /api/reports/fitness`\|`/top-performers`\|`/financial`, `POST /api/chat` — all require `X-API-Key`. `GET /api/charts/file/{filename}` — serves the PNG, no key (can't attach headers to `<img src>`; access control already happened at generation time). The full LangGraph agent (`app/langgraph_app/`) runs on every `/api/chat` call — see [The hybrid chat design](#the-hybrid-chat-design-3-chips-zero-llm). |
+| `frontend` | `node:20-alpine` build → `nginx:alpine` serve | `3000` (→ container port `80`) | The real app: `Login` (7 crests), `Dashboard` (own squad, full data), `InspectSquad` (redacted view of other teams), `Tactics` (SVG pitch diagrams per formation), `News` (honest placeholder), and a persistent `ChatPanel` (3 chips + free-form chatbox) on every page. Verified end-to-end in a real browser. |
 | `nginx` | `nginx:1.27-alpine` | `80` | Reverse proxy: `/api/*` → `backend:8000` (gated by the same `X-API-Key`, checked again independently), `/api/charts/file/*` → `backend:8000` (ungated, see above), everything else → `frontend:80`. Config is an envsubst template (`nginx/templates/default.conf.template`) so the real key never has to be hardcoded into a committed file. |
 
 ## Nginx + API key gate
@@ -158,7 +159,7 @@ Generate your own key any time with `python3 -c "import secrets; print(secrets.t
 
 ## The hybrid chat design: 3 chips, zero LLM
 
-The planned chat UI is a chatbox at the bottom (free-form questions, answered by the LangGraph agent once it exists — needs an LLM key) with exactly **3 quick-reply "chips"** above it. Clicking a chip never touches an LLM — it hits one of 3 new REST endpoints that query ClickHouse directly and come back instantly:
+The chat panel is persistent on the right of every page: a chatbox at the bottom (free-form questions, answered by the LangGraph agent - works today, gracefully says so if no LLM key is configured) with exactly **3 quick-reply "chips"** above it. Clicking a chip never touches an LLM — it hits one of 3 REST endpoints that query ClickHouse directly and come back instantly:
 
 | Chip | Endpoint | Data | Chart |
 |---|---|---|---|
@@ -166,9 +167,17 @@ The planned chat UI is a chatbox at the bottom (free-form questions, answered by
 | ⭐ Top Performers | `GET /api/reports/top-performers` | public (`public_stats`) | rating bar chart |
 | 💰 Financial Overview | `GET /api/reports/financial` | private (`salaries`) | wage bill bar chart |
 
-Each returns `{"text": "...", "chart_url": "..."}` — a **fixed text template, never LLM-generated**, with the actual numbers pulled live from ClickHouse on every call (so re-clicking a chip after `deploy_elt.py` runs again shows updated stats). This is deliberately the *exact same shape* the LangGraph chat endpoint will return later, so the frontend renders a chip's answer and an LLM's answer through one identical code path — click a chip or type a question, same-looking chat bubble either way. That equivalence is the actual "hybrid" the project is named for.
+Each returns `{"text": "...", "chart_url": "..."}` — a **fixed text template, never LLM-generated**, with the actual numbers pulled live from ClickHouse on every call (so re-clicking a chip after `deploy_elt.py` runs again shows updated stats).
 
-**On the "one database per tenant" query pattern**: this schema is one ClickHouse database per team, not a `tenant_id` column, so the team name can't be bound as a normal SQL parameter (parameter binding targets values, never table/database identifiers). `app/reports/generators.py` and `app/charts/generators.py` interpolate `team_code` directly into the SQL string — safe only because every call site has already run it through `get_active_team`'s check against `settings.team_list` (`app/deps.py`), never raw user input. Where a query filters by an actual value instead (e.g. the top-5 `LIMIT` in the performers report), that value *is* bound as a real ClickHouse parameter (`{limit:UInt8}`) — see `backend/README.md` for the full explanation with both patterns side by side.
+`POST /api/chat` (free-form questions) returns the *exact same shape* — the frontend's `ChatPanel.tsx` renders a chip's answer and the LLM agent's answer through one identical code path, no branching. That equivalence is the actual "hybrid" the project is named for. The agent itself is the real LangGraph 7-node graph from the original spec:
+
+```
+intent_router → stats_tool → rag_retriever → access_filter → reasoner → [chart_node?] → composer
+```
+
+Every node runs against real data (ClickHouse stats, ChromaDB retrieval) regardless of LLM key status - only `reasoner` needs one, and falls back to an honest "no LLM key configured, try a chip instead" message rather than erroring when it's missing. Ask something like *"compare my midfield to Brazil's"* even with no key and you'll still get a real, freshly-generated comparison chart (`app/charts/generators.py::team_comparison_chart`) alongside the fallback text — chart generation never depends on the LLM.
+
+**On the "one database per tenant" query pattern**: this schema is one ClickHouse database per team, not a `tenant_id` column, so the team name can't be bound as a normal SQL parameter (parameter binding targets values, never table/database identifiers). `app/reports/generators.py`, `app/charts/generators.py`, and the LangGraph nodes interpolate `team_code` directly into the SQL string — safe only because every call site has already run it through `get_active_team`'s check against `settings.team_list` (`app/deps.py`), never raw user input. Where a query filters by an actual value instead (e.g. the top-5 `LIMIT` in the performers report), that value *is* bound as a real ClickHouse parameter (`{limit:UInt8}`) — see `backend/README.md` for the full explanation with both patterns side by side.
 
 ## The product: public vs. private data
 
@@ -285,14 +294,20 @@ This project runs fully on real + synthetic data with **no LLM key** for now —
 
 ## Roadmap
 
-Phases still to come, in order:
+Done, in order built:
 
-1. ~~**Uniform data ingestion**~~ — done: real 26-man squads (Wikipedia + TheSportsDB), matches, trophies, plus synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`. Still open: API-Football (real `public_stats`, needs a paid key), Transfermarkt/RSS fetchers, and an Airflow layer to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
-2. ~~**Access control + REST API**~~ — done: `access_control.py` (single source of truth), `session`/`dashboard`/`inspect` routers, `data-sources` transparency endpoint.
-3. ~~**Charts (deterministic half)**~~ — done: `backend/app/charts/generators.py` + `/api/charts/*` router, callable directly with zero LLM involvement — this is the non-agentic half of the "hybrid" chat design.
-4. ~~**Nginx + API key gate**~~ — done: reverse proxy in front of backend + frontend, `X-API-Key` enforced independently by both Nginx and the backend. Still open: closing the direct `8000`/`3000` host ports so Nginx is the *only* way in (kept open for now, dev convenience).
-5. ~~**3 chip reports (deterministic chat half)**~~ — done: `backend/app/reports/generators.py` + `/api/reports/*` router — fixed text templates with live ClickHouse stats, matching the exact `{text, chart_url}` shape the LangGraph chat endpoint will return. See "The hybrid chat design" above.
-6. ~~**RAG pipeline**~~ — done: real, researched `knowledge_base/` content for all 7 teams + shared theory, chunked and embedded into 15 ChromaDB collections via `embedding_job/` (local sentence-transformers model, no LLM key). Not yet queried by the backend.
-7. **Agentic layer (agentic half of "hybrid", last phase before an LLM key is needed)** — LangGraph agent (`backend/app/langgraph_app/`), wired to a `chat` endpoint: `intent_router → stats_tool → rag_retriever → access_filter → reasoner → chart_node → composer`. `rag_retriever` queries the ChromaDB collections built above; `chart_node` calls the *same* chart generator functions the 3 chips use for free-form questions.
-8. **Real frontend** — login, dashboard, inspect, and chat pages (chatbox at the bottom, the 3 chips above it) replace the current placeholder page in `frontend/`.
-9. **Deployment** — containerized services on a host that supports the full Compose stack, direct backend/frontend ports closed so Nginx is the sole entrypoint; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).
+1. ~~**Uniform data ingestion**~~ — real 26-man squads (Wikipedia + TheSportsDB), matches, trophies, plus synthetic fields, via `ingestion/elt-pipeline-py-script/deploy_elt.py`.
+2. ~~**Access control + REST API**~~ — `access_control.py` (single source of truth), `session`/`dashboard`/`inspect` routers, `data-sources` transparency endpoint.
+3. ~~**Charts (deterministic half)**~~ — `backend/app/charts/generators.py` + `/api/charts/*` router, callable directly with zero LLM involvement.
+4. ~~**Nginx + API key gate**~~ — reverse proxy in front of backend + frontend, `X-API-Key` enforced independently by both.
+5. ~~**3 chip reports (deterministic chat half)**~~ — `backend/app/reports/generators.py` + `/api/reports/*` router.
+6. ~~**RAG pipeline**~~ — real, researched `knowledge_base/` content for all 7 teams + shared theory, chunked and embedded into 15 ChromaDB collections via `embedding_job/` (local sentence-transformers model, no LLM key).
+7. ~~**Agentic layer (agentic half of "hybrid")**~~ — the full LangGraph agent (`backend/app/langgraph_app/`), wired to `POST /api/chat`. `rag_retriever` queries the ChromaDB collections; `chart_node` calls the *same* chart generator functions the 3 chips use. `reasoner` gracefully degrades without an LLM key rather than erroring.
+8. ~~**Real frontend**~~ — login, dashboard, inspect, tactics (SVG pitch diagrams), news, and a persistent chat panel (3 chips + chatbox) — verified end-to-end in a real browser via Playwright.
+
+Still open:
+
+- **API-Football** (real `public_stats`, needs a paid key), **Transfermarkt/RSS fetchers** (real news), and an **Airflow layer** to schedule/automate re-fetching instead of running `deploy_elt.py` by hand.
+- **Add an LLM key** (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) to switch the chatbox from its graceful fallback to real tactical reasoning — see [Adding your LLM API key later](#adding-your-llm-api-key-later). Nothing else needs to change.
+- **Close the direct `8000`/`3000` host ports** so Nginx is the *only* way in (kept open for now, dev convenience) — needed before a real public deployment.
+- **Deployment** — containerized services on a host that supports the full Compose stack; a static frontend build can go on Vercel separately, but ClickHouse/ChromaDB/the backend need a real container host (Vercel doesn't run long-lived stateful containers).

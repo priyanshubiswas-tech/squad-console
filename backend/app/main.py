@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import charts, dashboard, data_sources, health, inspect, reports, session
+from app.routers import chat, charts, dashboard, data_sources, health, inspect, reports, session
 
 app = FastAPI(title="squad-console backend")
 
@@ -23,3 +23,4 @@ app.include_router(inspect.router)
 app.include_router(data_sources.router)
 app.include_router(charts.router)
 app.include_router(reports.router)
+app.include_router(chat.router)

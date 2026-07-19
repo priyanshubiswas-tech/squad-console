@@ -138,3 +138,43 @@ def wage_overview_chart(team_code: str) -> str:
     ax.tick_params(axis="y", colors=TEXT)
 
     return _save(fig, f"{team_code}_wage_overview.png")
+
+
+def team_comparison_chart(team_code: str, opponent_code: str) -> str:
+    """Grouped bar: average rating by position, own team vs opponent.
+
+    Opponent side only ever reads public_stats - the same table
+    access_control.py leaves fully public for inspect mode - so this is
+    safe to generate for any named opponent, never their private data.
+    """
+    client = get_client()
+
+    def _avg_by_position(team: str) -> dict:
+        rows = client.query(f"""
+            SELECT p.position, avg(s.rating_avg)
+            FROM {team}.public_stats s JOIN {team}.players p ON p.player_id = s.player_id
+            GROUP BY p.position
+        """).result_rows
+        return dict(rows)
+
+    own = _avg_by_position(team_code)
+    opponent = _avg_by_position(opponent_code)
+    if not own or not opponent:
+        raise ValueError(f"No public_stats data for '{team_code}' or '{opponent_code}' - run the ELT pipeline first")
+
+    positions = sorted(set(own) | set(opponent))
+    x = range(len(positions))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(7, 4.5), facecolor=BG)
+    ax.bar([i - width / 2 for i in x], [own.get(p, 0) for p in positions], width,
+           label=team_code.capitalize(), color=PITCH)
+    ax.bar([i + width / 2 for i in x], [opponent.get(p, 0) for p in positions], width,
+           label=opponent_code.capitalize(), color=INDIGO)
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(positions, color=TEXT_SECONDARY)
+
+    _style_axes(ax, f"{team_code.capitalize()} vs {opponent_code.capitalize()} - avg rating by position", "", "Rating (avg)")
+    ax.legend(facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT, fontsize=8)
+
+    return _save(fig, f"{team_code}_vs_{opponent_code}_comparison.png")

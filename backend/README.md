@@ -1,6 +1,6 @@
 # backend
 
-FastAPI service. Session, dashboard, inspect, data-sources, chart, and report routers are built and access-controlled; `news` and the LangGraph `chat` endpoint come in a later phase (see the root `README.md` roadmap).
+FastAPI service. Session, dashboard, inspect, data-sources, chart, report, and chat (LangGraph agent) routers are all built and access-controlled; only `news` remains for a later phase (see the root `README.md` roadmap).
 
 ## Endpoints
 
@@ -15,9 +15,32 @@ FastAPI service. Session, dashboard, inspect, data-sources, chart, and report ro
 - `GET /api/charts/{team_code}/injury-risk` 🔑 — private, active-team-only (403 otherwise) — matplotlib PNG of the squad's fatigue trend.
 - `GET /api/charts/{team_code}/top-performers` 🔑 — public, any team — matplotlib PNG of top `rating_avg` players.
 - `GET /api/charts/file/{filename}` — serves a previously generated chart PNG. Deliberately not key-gated: it's loaded via a plain `<img src>`, which can't attach custom headers, and the private data behind it was already access-controlled when the chart was generated.
-- `GET /api/reports/fitness` 🔑, `/top-performers` 🔑, `/financial` 🔑 — the 3 chatbot "chips". Always scoped to the active team (cookie), no `{team_code}` path param. Each returns `{text, chart_url}` — a **fixed text template with live numbers** (never LLM-generated) plus a matplotlib/seaborn PNG. This is the same response shape the future LangGraph chat endpoint will return, so the frontend chat window renders a chip click and an LLM answer through one identical code path — that's the "hybrid" in this project's name. See `app/reports/generators.py` for the query + templating logic.
+- `GET /api/reports/fitness` 🔑, `/top-performers` 🔑, `/financial` 🔑 — the 3 chatbot "chips". Always scoped to the active team (cookie), no `{team_code}` path param. Each returns `{text, chart_url}` — a **fixed text template with live numbers** (never LLM-generated) plus a matplotlib/seaborn PNG. See `app/reports/generators.py` for the query + templating logic.
+- `POST /api/chat` 🔑 — body `{"message": "..."}`, runs the full LangGraph agent (`app/langgraph_app/graph.py`) and returns `{text, chart_url}` — the exact same shape as the reports above, so the frontend renders a chip click and an LLM answer through one identical code path. That equivalence is the "hybrid" in this project's name.
 
-`access_control.py` is the single function (`get_allowed_tables`) both `inspect.py` and the future LangGraph `access_filter` node call — never duplicate that logic elsewhere. It's a separate concern from the `X-API-Key` gate above: the key controls whether a request reaches the API at all, the access-control matrix controls which data a legitimate request can see.
+`access_control.py` is the single function (`get_allowed_tables`) both `inspect.py` and the LangGraph `access_filter` node call — never duplicate that logic elsewhere. It's a separate concern from the `X-API-Key` gate above: the key controls whether a request reaches the API at all, the access-control matrix controls which data a legitimate request can see.
+
+## The LangGraph agent (`app/langgraph_app/`)
+
+Seven nodes, in order, matching the original spec exactly:
+
+```
+intent_router → stats_tool → rag_retriever → access_filter → reasoner → [chart_node?] → composer
+```
+
+- **`intent_router`** — keyword-based (no LLM), classifies `tactical_advice`/`comparison`/`stat_lookup`/`general` and extracts an opponent team name from phrasing like "vs Brazil". Keyword-based on purpose: intent routing works even with no LLM key.
+- **`stats_tool`** — queries ClickHouse: own team's `players`/`public_stats`/`formations` in full; an opponent (if named) gets `public_stats` only.
+- **`rag_retriever`** — queries ChromaDB: `{active_team}_full` always, plus `{opponent_team}_public` + `shared_theory` if an opponent was named. Never queries `{opponent_team}_full`.
+- **`access_filter`** — re-applies `access_control.get_allowed_tables` as a defense-in-depth check on whatever the two nodes above fetched for an opponent.
+- **`reasoner`** — the only node that needs an LLM (`ChatAnthropic`/`ChatOpenAI` via `langchain`). **Gracefully degrades** to an honest "no LLM key configured, try a chip instead" message if `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is blank, rather than erroring — every upstream node still ran against real data either way.
+- **`chart_node`** (conditional on `comparison` intent) — calls `app/charts/generators.py::team_comparison_chart`, the *same* function a chip could call. Chart generation never depends on the LLM.
+- **`composer`** — assembles `{text, chart_url}`.
+
+Test prompts to try once you've hit `POST /api/session/select-team`:
+- *"What formation should I use against Brazil and why?"* → `tactical_advice`, retrieves `england_full` + `brazil_public` + `shared_theory`.
+- *"Who are my top scorers?"* → `stat_lookup`, no opponent extracted.
+- *"Compare my midfield to Brazil's"* → `comparison`, triggers `chart_node`, returns a real chart even without an LLM key.
+- *"What's Brazil's injury situation?"* → `stats_tool` never queries opponent injuries at all (only `public_stats`), so this is structurally impossible to leak, not just prompt-filtered.
 
 ### On "parameterized queries" for a per-database-per-tenant model
 

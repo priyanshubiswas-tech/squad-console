@@ -1,64 +1,24 @@
-import { useEffect, useState } from "react";
-
-// Talk to the backend directly during this infra pass - nginx/reverse
-// proxying gets added once the real app (session/dashboard/chat) exists.
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
-
-// Baked in at build time (docker-compose passes it as a build arg) - note
-// this is inherently visible in the shipped JS bundle, like any browser-side
-// "secret". It's a gate against casual/automated direct API access, not a
-// true auth boundary; /api/health/clickhouse below doesn't even require it,
-// but it's attached here as the standard pattern for the gated endpoints
-// (dashboard/inspect/charts) the real frontend will call next.
-const API_KEY = import.meta.env.VITE_API_KEY ?? "";
-
-type ClickhouseHealth = {
-  status: string;
-  databases: string[];
-  missing: string[];
-};
+import { Navigate, Route, Routes } from "react-router-dom";
+import { useTeam } from "./context/TeamContext";
+import Dashboard from "./pages/Dashboard";
+import InspectSquad from "./pages/InspectSquad";
+import Login from "./pages/Login";
+import News from "./pages/News";
+import Tactics from "./pages/Tactics";
 
 export default function App() {
-  const [health, setHealth] = useState<ClickhouseHealth | "loading" | "error">("loading");
-
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/api/health/clickhouse`, { headers: { "X-API-Key": API_KEY } })
-      .then((res) => res.json())
-      .then(setHealth)
-      .catch(() => setHealth("error"));
-  }, []);
+  const { activeTeam } = useTeam();
+  const fallback = activeTeam ? "/dashboard" : "/login";
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 text-center">
-      <h1 className="text-4xl font-medium tracking-tight">
-        Tactica <span className="text-textSecondary text-lg">(placeholder)</span>
-      </h1>
-      <p className="text-textSecondary max-w-md">
-        Infra scaffold only - login, dashboard, and the analyst chatbot aren't built yet. This
-        page just proves the frontend container can reach the backend and ClickHouse.
-      </p>
-
-      <div className="rounded-card border border-[#2a3344] bg-card px-6 py-4 text-left w-full max-w-md">
-        <h2 className="text-textSecondary text-sm uppercase tracking-wide mb-2">
-          Backend / ClickHouse health
-        </h2>
-        {health === "loading" && <p>Checking…</p>}
-        {health === "error" && <p className="text-danger">Could not reach backend at {BACKEND_URL}</p>}
-        {typeof health === "object" && (
-          <ul className="space-y-1 text-sm">
-            <li>
-              status:{" "}
-              <span className={health.status === "ok" ? "text-pitch" : "text-lock"}>
-                {health.status}
-              </span>
-            </li>
-            <li>databases: {health.databases.join(", ")}</li>
-            {health.missing.length > 0 && (
-              <li className="text-danger">missing: {health.missing.join(", ")}</li>
-            )}
-          </ul>
-        )}
-      </div>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/inspect" element={<InspectSquad />} />
+      <Route path="/tactics" element={<Tactics />} />
+      <Route path="/news" element={<News />} />
+      <Route path="/" element={<Navigate to={fallback} replace />} />
+      <Route path="*" element={<Navigate to={fallback} replace />} />
+    </Routes>
   );
 }
