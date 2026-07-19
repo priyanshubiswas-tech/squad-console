@@ -15,17 +15,26 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "reasoner_pro
 def _llm_configured(settings) -> bool:
     if settings.llm_provider == "anthropic":
         return bool(settings.anthropic_api_key)
+    if settings.llm_provider == "google":
+        return bool(settings.google_api_key)
     return bool(settings.openai_api_key)
 
 
 def _missing_key_name(settings) -> str:
-    return "ANTHROPIC_API_KEY" if settings.llm_provider == "anthropic" else "OPENAI_API_KEY"
+    if settings.llm_provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if settings.llm_provider == "google":
+        return "GOOGLE_API_KEY"
+    return "OPENAI_API_KEY"
 
 
 def _build_llm(settings):
     if settings.llm_provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(model=settings.llm_model, api_key=settings.anthropic_api_key)
+    if settings.llm_provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(model=settings.llm_model, google_api_key=settings.google_api_key)
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(model=settings.llm_model, api_key=settings.openai_api_key)
 

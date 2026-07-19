@@ -39,7 +39,7 @@ The full app is up and working end-to-end on real data, with **no LLM key requir
 - **Ingestion is Airflow-orchestrated** — `squad_console_elt` DAG wraps `deploy_elt.py`'s stages as independent tasks (extract → transform → mock-generate → partition). See [Scheduled ingestion with Airflow](#scheduled-ingestion-with-airflow).
 - **Deployed** — the frontend is live on Vercel, reaching the local Docker stack through a Cloudflare Tunnel. See [Deployment: Vercel + Cloudflare Tunnel](#deployment-vercel--cloudflare-tunnel).
 
-Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` any time to switch the chatbox from its graceful fallback message to real tactical reasoning — nothing else changes. See [Adding your LLM API key later](#adding-your-llm-api-key-later).
+Add `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY` any time to switch the chatbox from its graceful fallback message to real tactical reasoning — nothing else changes. See [Adding your LLM API key later](#adding-your-llm-api-key-later).
 
 ## Architecture
 
@@ -302,7 +302,11 @@ Verify it worked with the same health checks from the setup SOP above (`curl loc
 
 ## Adding your LLM API key later
 
-This project runs fully on real + synthetic data with **no LLM key** for now — that gets added last, once the LangGraph agent phase is built. When you get there: open `.env`, fill in `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` plus `LLM_MODEL`, and restart the backend (`docker compose restart backend`). Nothing else changes.
+This project runs fully on real + synthetic data with **no LLM key** for now — that gets added last, once the LangGraph agent phase is built. When you get there: open `.env`, set `LLM_PROVIDER` to `anthropic`, `openai`, or `google`, fill in the matching key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY`) plus `LLM_MODEL`, and restart the backend (`docker compose restart backend`). Nothing else changes — `reasoner.py` (`backend/app/langgraph_app/nodes/reasoner.py`) branches on `LLM_PROVIDER` to build the right LangChain chat model.
+
+**Using Gemini (`LLM_PROVIDER=google`):** verified working with `LLM_MODEL=gemini-flash-latest` (an alias Google points at its current recommended Flash model — currently resolves to `gemini-3.5-flash`). Don't hard-pin `gemini-2.5-flash`: it returns `404 ... no longer available to new users` for any Google Cloud project created after that model's cutoff, even though it still shows up in the `/v1beta/models` listing — the alias sidesteps that.
+
+Rate limits (free tier, no billing enabled) are per-project and change often enough that Google doesn't publish fixed numbers in its docs — check `https://aistudio.google.com/rate-limit` for your actual project. As of writing, publicly reported free-tier ballparks are roughly 10–15 RPM / ~1,500 RPD / ~1M TPM for Flash-family models, and single-digit RPM / ~50–100 RPD for Pro-family models — tight enough that a live chat feature should not depend on the free tier alone. Enabling billing upgrades a project to **Tier 1** immediately (no minimum spend); **Tier 2** needs $100+ cumulative Google Cloud spend and 3+ days since first payment; **Tier 3** needs $1,000+ and 30+ days. Commonly reported (though not explicitly confirmed in Google's own docs): once billing is enabled, the free tier no longer applies on that project — every call becomes billable from the first token, unlike most other Google Cloud services where a free allowance persists alongside paid usage.
 
 ## Scheduled ingestion with Airflow
 
@@ -372,10 +376,10 @@ Done, in order built:
 9. ~~**Cape Verde added as an 8th team**~~ — schema (`database/clickhouse/init/09_team_capeverde.sql`), ingestion, knowledge base, and the layered crest+manager login/header treatment (`frontend/src/components/TeamCrest.tsx`).
 10. ~~**Airflow layer**~~ — `airflow/` wraps `deploy_elt.py`'s stages as an independent-task DAG (`squad_console_elt`) instead of running it by hand. See [Scheduled ingestion with Airflow](#scheduled-ingestion-with-airflow).
 11. ~~**Deployment (partial)**~~ — the frontend is live on Vercel, reaching this local stack through a Cloudflare Tunnel. See [Deployment: Vercel + Cloudflare Tunnel](#deployment-vercel--cloudflare-tunnel) for what that does and doesn't give you.
+12. ~~**Add an LLM key**~~ — `GOOGLE_API_KEY` (`LLM_PROVIDER=google`, `LLM_MODEL=gemini-flash-latest`) is wired up and verified end-to-end (real chat responses + chart generation); `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` remain available too. See [Adding your LLM API key later](#adding-your-llm-api-key-later).
 
 Still open:
 
 - **API-Football** (real `public_stats`, needs a paid key) and **Transfermarkt/RSS fetchers** (real news) — the DAG has a place to slot these in once keys exist.
-- **Add an LLM key** (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) to switch the chatbox from its graceful fallback to real tactical reasoning — see [Adding your LLM API key later](#adding-your-llm-api-key-later). Nothing else needs to change.
 - **Close the direct `8000`/`3000` host ports** so Nginx is the *only* way in (kept open for now, dev convenience) — needed before a real public deployment.
 - **A durable deployment** — the current Vercel+Tunnel setup depends on your machine staying on and a free/ephemeral tunnel URL; a real deployment needs ClickHouse/ChromaDB/the backend on a persistent container host (Vercel itself doesn't run long-lived stateful containers) and a named (not quick) tunnel or equivalent.
