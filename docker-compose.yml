@@ -93,8 +93,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      _AIRFLOW_WWW_USER_USERNAME: admin
-      _AIRFLOW_WWW_USER_PASSWORD: admin
+      # _AIRFLOW_WWW_USER_USERNAME/_PASSWORD are NOT read by `airflow standalone`
+      # (that's a LocalExecutor docker-compose convention) - standalone always
+      # generates its own admin user + random password on first init instead,
+      # written to /opt/airflow/standalone_admin_password.txt. On a fresh
+      # airflow_home volume, reset it to something memorable with:
+      #   docker compose exec airflow airflow users reset-password -u admin -p admin
       # Distinct from the shared CLICKHOUSE_HOST in .env (see ingestion/.../config.py)
       # - this is what lets the ELT pipeline run unmodified in-network here.
       INGESTION_CLICKHOUSE_HOST: clickhouse
